@@ -1,138 +1,81 @@
-'use client';
+"use client"
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { useAuth } from '@/hooks/useAuth';
-import Link from 'next/link';
-import { BarChart3, Bell, LogOut, Menu, Zap } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { AppSidebar } from "@/components/app-sidebar"
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb"
+import { Separator } from "@/components/ui/separator"
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar"
+import { usePathname } from "next/navigation"
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const router = useRouter();
-  const { user, loading } = useAuth();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+const DashboardLayout = ({ children }: Readonly<{ children: React.ReactNode }>) => {
+  const pathname = usePathname();
 
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push('/login');
+  const getTitle = (path: string) => {
+    const routeMap: Record<string, string> = {
+      '/dashboard': 'Overview',
+      '/dashboard/analytics': 'Analytics',
+      '/dashboard/reports': 'Reports',
+    };
+
+    if (routeMap[path]) {
+      return routeMap[path];
     }
-  }, [user, loading, router]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="text-center">
-          <div className="w-12 h-12 rounded-full border-4 border-blue-200 border-t-blue-600 animate-spin mx-auto mb-4"></div>
-          <p className="text-slate-600">Loading...</p>
-        </div>
-      </div>
-    );
-  }
+    const segments = path.split('/').filter(Boolean);
+    const lastSegment = segments[segments.length - 1];
 
-  if (!user) {
-    return null;
-  }
-
-  return (
-    <div className="flex h-screen bg-background">
-      {/* Mobile Menu Button */}
-      <button
-        onClick={() => setSidebarOpen(!sidebarOpen)}
-        className="md:hidden fixed top-4 left-4 z-50 p-2 bg-white rounded-lg shadow"
-      >
-        <Menu size={24} />
-      </button>
-
-      {/* Sidebar */}
-      <aside
-        className={`${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        } md:translate-x-0 transition-transform fixed md:relative z-40 w-64 h-screen bg-slate-900 text-white flex flex-col`}
-      >
-        <div className="p-6 border-b border-slate-700">
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Zap className="w-6 h-6 text-blue-400" />
-            IoT Monitor
-          </h2>
-        </div>
-
-        <nav className="flex-1 p-6 space-y-2">
-          <Link
-            href="/dashboard"
-            onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-slate-800 transition-colors"
-          >
-            <BarChart3 size={20} />
-            Overview
-          </Link>
-          <Link
-            href="/dashboard/analytics"
-            onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-slate-800 transition-colors"
-          >
-            <BarChart3 size={20} />
-            Analytics
-          </Link>
-          <Link
-            href="/dashboard/notifications"
-            onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-slate-800 transition-colors"
-          >
-            <Bell size={20} />
-            Notifications
-          </Link>
-        </nav>
-
-        <div className="p-6 border-t border-slate-700">
-          <div className="mb-4 pb-4 border-b border-slate-700">
-            <p className="text-sm text-slate-400">Signed in as</p>
-            <p className="text-white font-medium truncate">{user.email}</p>
-          </div>
-          <LogoutButton />
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 overflow-auto md:ml-0 mt-16 md:mt-0">
-        <div className="p-4 md:p-8">{children}</div>
-      </main>
-
-      {/* Mobile Overlay */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 md:hidden z-30"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-    </div>
-  );
-}
-
-function LogoutButton() {
-  const router = useRouter();
-  const { logout, loading } = useAuth();
-
-  const handleLogout = async () => {
-    try {
-      await logout();
-      router.push('/login');
-    } catch (err) {
-      console.error('Logout failed:', err);
+    if (!lastSegment || lastSegment === 'dashboard') {
+      return 'Overview';
     }
+
+    return lastSegment
+      .replace(/[-_]/g, ' ')
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
   };
 
   return (
-    <Button
-      onClick={handleLogout}
-      disabled={loading}
-      className="w-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center gap-2"
-    >
-      <LogOut size={18} />
-      Logout
-    </Button>
-  );
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset className="flex flex-col min-h-screen w-full">
+        <header className="flex h-16 shrink-0 items-center justify-between gap-2 border-b px-4">
+          <div className="flex items-center gap-2">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 h-4" />
+            <Breadcrumb>
+                  <BreadcrumbList>
+                    <BreadcrumbItem className="hidden md:block">
+                      <BreadcrumbLink href="#">
+                        <span className="text-muted-foreground">Dashboard</span>
+                      </BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator className="hidden md:block" />
+                    <BreadcrumbItem>
+                      <BreadcrumbPage>
+                        {getTitle(pathname)}
+                      </BreadcrumbPage>
+                    </BreadcrumbItem>
+                  </BreadcrumbList>
+                </Breadcrumb>
+              </div>
+            </header>
+            <main className="flex-1 overflow-hidden w-full">
+              {children}
+            </main>
+          </SidebarInset>
+        </SidebarProvider>
+  )
 }
+
+export default DashboardLayout
