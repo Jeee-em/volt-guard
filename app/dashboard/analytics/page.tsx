@@ -1,346 +1,235 @@
+// app/analytics/page.tsx
 'use client';
 
-import { useState } from 'react';
-import { useSensorData } from '@/hooks/useSensorData';
-import {
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from 'recharts';
-import { Card } from '@/components/ui/card';
-import { TrendingUp, Calendar } from 'lucide-react';
+import { AnalyticsHeader } from "@/components/dashboard/analytics-header";
+import { AnomalyAlert, AnomalyAlertBanner } from "@/components/dashboard/anomaly-alert-banner";
+import { AnomalyHistoryTable, AnomalyRecord, AlertSeverity, AlertMetric } from "@/components/dashboard/anomaly-history-table";
+import { CorrelationPanel } from "@/components/dashboard/correlation-panel";
+import { MetricCard } from "@/components/dashboard/metric-card";
+import { SensorAreaChart } from "@/components/dashboard/sensor-area-chart";
+import { SensorBarChart } from "@/components/dashboard/sensor-bar-chart";
+import { SensorChartGrid } from "@/components/dashboard/sensor-chart-grid";
+import { SensorLineChart } from "@/components/dashboard/sensor-line-chart";
+import { ThresholdStatsPanel } from "@/components/dashboard/threshold-stats-panel";
+import { Activity, Gauge, Zap } from "lucide-react";
+import { useCallback } from "react";
+import { useState } from "react";
 
-type TimeRange = '24h' | '7d' | '30d';
+const METRICS = [
+  {
+    key: 'voltage', label: 'Voltage', unit: 'V', color: '#378ADD',
+    defaultThresholds: { warning: 240, critical: 250 }
+  },
+  {
+    key: 'current', label: 'Current', unit: 'A', color: '#BA7517',
+    defaultThresholds: { warning: 16, critical: 18 }
+  },
+  {
+    key: 'power', label: 'Power', unit: 'W', color: '#1D9E75',
+    defaultThresholds: { warning: 3500, critical: 4500 }
+  },
+];
+
+// Threshold types for anomaly detection
+type Threshold = { warning: number; critical: number };
+type ThresholdConfig = Record<string, Threshold>;
 
 export default function AnalyticsPage() {
-  const [selectedSensor, setSelectedSensor] = useState('device_1');
-  const [timeRange, setTimeRange] = useState<TimeRange>('24h');
-  const { historicalData, loading, error } = useSensorData(selectedSensor);
+  const handleRefresh = () => { /* re-fetch your sensor data */ };
+  const [thresholds, setThresholds] = useState<ThresholdConfig>(
+    Object.fromEntries(METRICS.map((m) => [m.key, m.defaultThresholds])) as ThresholdConfig
+  );
 
-  const sensors = [
-    { id: 'device_1', name: 'Device 1' },
-    { id: 'device_2', name: 'Device 2' },
-    { id: 'device_3', name: 'Device 3' },
-  ];
+  const handleThresholdChange = useCallback(
+    (key: string, type: 'warning' | 'critical', value: number) => {
+      setThresholds((prev) => ({
+        ...prev,
+        [key]: { ...prev[key], [type]: value },
+      }));
+      // Your anomaly detection logic re-runs here with new thresholds
+    },
+    []
+  );
 
-  const getRangeLabel = (range: TimeRange) => {
-    switch (range) {
-      case '24h':
-        return 'Last 24 Hours';
-      case '7d':
-        return 'Last 7 Days';
-      case '30d':
-        return 'Last 30 Days';
-    }
-  };
+  const handleThresholdReset = useCallback((key: string) => {
+    const meta = METRICS.find((m) => m.key === key);
+    if (meta) setThresholds((prev) => ({ ...prev, [key]: meta.defaultThresholds }));
+  }, []);
 
-  const getRangeMultiplier = (range: TimeRange) => {
-    switch (range) {
-      case '24h':
-        return 288; // 24 hours * 60 minutes / 5 minute intervals
-      case '7d':
-        return 2016; // 7 days
-      case '30d':
-        return 8640; // 30 days
-    }
-  };
+  // 🔥 MOCK DATA (inline, no separate file)
+  const mockHistoricalData = Array.from({ length: 300 }, (_, i) => {
+    const now = Date.now();
+    const timestamp = now - (300 - i) * 5 * 60 * 1000; // every 5 mins
 
-  const filterChartData = () => {
-    const multiplier = getRangeMultiplier(timeRange);
-    const filtered = historicalData.slice(-multiplier);
+    const hour = new Date(timestamp).getHours();
 
-    return filtered.map((reading) => {
-      const date = new Date(reading.timestamp);
-      return {
-        time:
-          timeRange === '24h'
-            ? date.toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-              })
-            : date.toLocaleDateString([], {
-                month: 'short',
-                day: 'numeric',
-              }),
-        voltage: Math.round(reading.voltage * 100) / 100,
-        current: Math.round(reading.current * 100) / 100,
-        power: Math.round(reading.power),
-        temperature: Math.round(reading.temperature * 10) / 10,
-        humidity: Math.round(reading.humidity),
-      };
-    });
-  };
+    // simulate realistic usage pattern
+    const baseCurrent = hour >= 8 && hour <= 20 ? 5 : 2.5;
 
-  const calculateStats = () => {
-    const multiplier = getRangeMultiplier(timeRange);
-    const data = historicalData.slice(-multiplier);
-
-    if (data.length === 0) {
-      return {
-        avgVoltage: 0,
-        avgCurrent: 0,
-        avgPower: 0,
-        maxPower: 0,
-        minPower: 0,
-      };
-    }
-
-    const voltages = data.map((d) => d.voltage);
-    const currents = data.map((d) => d.current);
-    const powers = data.map((d) => d.power);
+    const voltage = 220 + Math.random() * 6 - 3; // ~217–223V
+    const current = baseCurrent + Math.random(); // ~2.5–6A
+    const power = voltage * current;
 
     return {
-      avgVoltage:
-        (voltages.reduce((a, b) => a + b, 0) / voltages.length).toFixed(2),
-      avgCurrent:
-        (currents.reduce((a, b) => a + b, 0) / currents.length).toFixed(2),
-      avgPower: (powers.reduce((a, b) => a + b, 0) / powers.length).toFixed(0),
-      maxPower: Math.max(...powers).toFixed(0),
-      minPower: Math.min(...powers).toFixed(0),
+      timestamp,
+      voltage,
+      current,
+      power,
     };
+  });
+
+  const currentReading = mockHistoricalData[mockHistoricalData.length - 1];
+
+  const loading = false;
+  const error = null;
+
+  // 🔥 Your existing formatter (unchanged)
+  const formatChartData = () => {
+    return mockHistoricalData.slice(-288).map((reading) => ({
+      time: new Date(reading.timestamp).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      voltage: Math.round(reading.voltage * 100) / 100,
+      current: Math.round(reading.current * 100) / 100,
+      power: Math.round(reading.power),
+    }));
   };
 
-  const stats = calculateStats();
-  const chartData = filterChartData();
+  const chartData = formatChartData();
+
+  const [alerts, setAlerts] = useState<AnomalyAlert[]>([
+    {
+      id: '1',
+      severity: 'critical',
+      status: 'active',
+      metric: 'current',
+      message: 'Current spike detected — exceeded critical threshold.',
+      value: 18.9,
+      unit: 'A',
+      threshold: 18,
+      timestamp: new Date().toISOString(),
+    },
+  ]);
+
+  const metrics = [
+    { key: 'voltage', color: '#378ADD', label: 'Voltage', unit: 'V' },
+    { key: 'current', color: '#BA7517', label: 'Current', unit: 'A' },
+    { key: 'power', color: '#1D9E75', label: 'Power', unit: 'W' },
+  ];
+  const records: AnomalyRecord[] = Array.from({ length: 12 }).map((_, i) => {
+    const minutesAgo = (12 - i) * 5; // spread entries across the past hour
+    const triggeredAt = new Date(Date.now() - minutesAgo * 60 * 1000).toISOString();
+    const resolvedAt = new Date(Date.now() - (minutesAgo - 2) * 60 * 1000).toISOString();
+    const isActive = i % 3 === 0; // some active, some resolved
+    const sev: AlertSeverity = (i % 4 === 0 ? 'critical' : i % 4 === 1 ? 'warning' : 'info');
+    const metricKey: AlertMetric = (i % 2 === 0 ? 'current' : 'voltage');
+    const value = Math.round((metricKey === 'current' ? 18 + Math.random() * 2 : 230 + Math.random() * 4) * 10) / 10;
+    return {
+      id: String(i + 1),
+      severity: sev,
+      status: isActive ? 'active' : 'resolved',
+      metric: metricKey,
+      message: `${metricKey === 'current' ? 'Current spike' : 'Voltage fluctuation'} detected — check thresholds.`,
+      value,
+      unit: metricKey === 'current' ? 'A' : 'V',
+      threshold: metricKey === 'current' ? 18 : 230,
+      triggeredAt,
+      resolvedAt: isActive ? undefined : resolvedAt,
+      duration: isActive ? undefined : 120,
+    } as AnomalyRecord;
+  });
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-slate-900 mb-2">Analytics</h1>
-        <p className="text-slate-600">Historical data and performance metrics</p>
+    <div className="container mx-auto p-6 space-y-8">
+      <AnalyticsHeader
+        isConnected={true}
+        deviceName="Panel A · Node 01"
+        onRangeChange={(range) => console.log('range:', range)}
+        onRefreshIntervalChange={(interval) => console.log('interval:', interval)}
+        onRefresh={handleRefresh}
+        loading={false}
+      />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <MetricCard
+          title="Active Power"
+          value="4.82"
+          unit="kW"
+          icon={Zap}
+          colorClass="text-green-700"
+          bgClass="bg-green-100"
+          status="Normal"
+          rangePercent={48}
+          rangeMin="0 kW"
+          rangeMax="10 kW"
+          delta="↑ 0.3 kW"
+          lastUpdated="Updated 12s ago"
+        />
+        <MetricCard
+          title="Voltage"
+          value="231"
+          unit="V"
+          icon={Activity}
+          colorClass="text-blue-700"
+          bgClass="bg-blue-100"
+          status="Stable"
+          rangePercent={77}
+          rangeMin="207 V"
+          rangeMax="253 V"
+          delta="± 0.4 V"
+          lastUpdated="Updated 8s ago"
+        />
+        <MetricCard
+          title="Current"
+          value="18.6"
+          unit="A"
+          icon={Gauge}
+          colorClass="text-amber-700"
+          bgClass="bg-amber-100"
+          status="High"
+          rangePercent={93}
+          rangeMin="0 A"
+          rangeMax="20 A"
+          delta="↑ 2.1 A"
+          lastUpdated="Updated 3s ago"
+        />
+        {/* <MetricCard
+            title="Power Factor"
+            value="0.94"
+            unit="pf"
+            icon={PenLine}
+            colorClass="text-purple-700"
+            bgClass="bg-purple-100"
+            status="Good"
+            rangePercent={94}
+            rangeMin="0.0"
+            rangeMax="1.0"
+            delta="↓ 0.01"
+            lastUpdated="Updated 15s ago"
+          /> */}
       </div>
+      <AnomalyAlertBanner
+        alerts={alerts}
+        onDismiss={(id) => setAlerts((prev) => prev.filter((a) => a.id !== id))}
+        onClearResolved={() => setAlerts((prev) => prev.filter((a) => a.status === 'active'))}
+      />
+      <SensorChartGrid layout="1+2" title="Sensor Readings">
+        <SensorLineChart title="Live Signal" data={chartData} metrics={metrics} />
+        <SensorAreaChart title="Load Distribution" data={chartData} metrics={metrics} />
+        <SensorBarChart title="Interval Averages" data={chartData} metrics={metrics} />
+      </SensorChartGrid>
 
-      {/* Controls */}
-      <div className="flex flex-col md:flex-row gap-6 md:items-center md:justify-between">
-        {/* Sensor Selection */}
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-2">
-            Select Device
-          </label>
-          <select
-            value={selectedSensor}
-            onChange={(e) => setSelectedSensor(e.target.value)}
-            className="px-4 py-2 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {sensors.map((sensor) => (
-              <option key={sensor.id} value={sensor.id}>
-                {sensor.name}
-              </option>
-            ))}
-          </select>
-        </div>
+      <ThresholdStatsPanel
+        metrics={METRICS}
+        data={chartData}
+        thresholds={thresholds}
+        onThresholdChange={handleThresholdChange}
+        onThresholdReset={handleThresholdReset}
+      />
 
-        {/* Time Range Selection */}
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-2">
-            Time Range
-          </label>
-          <div className="flex gap-2">
-            {(['24h', '7d', '30d'] as TimeRange[]).map((range) => (
-              <button
-                key={range}
-                onClick={() => setTimeRange(range)}
-                className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                  timeRange === range
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-white border border-slate-300 text-slate-700 hover:border-blue-400'
-                }`}
-              >
-                {range}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
+      <AnomalyHistoryTable records={records} pageSize={10} />
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        <Card className="p-4">
-          <p className="text-slate-600 text-xs font-medium mb-1">
-            Average Voltage
-          </p>
-          <p className="text-2xl font-bold text-slate-900">{stats.avgVoltage}V</p>
-        </Card>
-
-        <Card className="p-4">
-          <p className="text-slate-600 text-xs font-medium mb-1">
-            Average Current
-          </p>
-          <p className="text-2xl font-bold text-slate-900">{stats.avgCurrent}A</p>
-        </Card>
-
-        <Card className="p-4">
-          <p className="text-slate-600 text-xs font-medium mb-1">
-            Average Power
-          </p>
-          <p className="text-2xl font-bold text-slate-900">{stats.avgPower}W</p>
-        </Card>
-
-        <Card className="p-4">
-          <p className="text-slate-600 text-xs font-medium mb-1">
-            Peak Power
-          </p>
-          <p className="text-2xl font-bold text-slate-900">{stats.maxPower}W</p>
-        </Card>
-
-        <Card className="p-4">
-          <p className="text-slate-600 text-xs font-medium mb-1">
-            Min Power
-          </p>
-          <p className="text-2xl font-bold text-slate-900">{stats.minPower}W</p>
-        </Card>
-      </div>
-
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="p-6">
-          <h2 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
-            <TrendingUp size={20} className="text-blue-600" />
-            Voltage Analysis
-          </h2>
-          {loading ? (
-            <div className="h-80 flex items-center justify-center text-slate-500">
-              Loading...
-            </div>
-          ) : error ? (
-            <div className="h-80 flex items-center justify-center text-red-500">
-              {error}
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis
-                  dataKey="time"
-                  stroke="#64748b"
-                  style={{ fontSize: '12px' }}
-                  tick={{ angle: -45, textAnchor: 'end', height: 80 }}
-                />
-                <YAxis stroke="#64748b" style={{ fontSize: '12px' }} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#f8fafc',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '8px',
-                  }}
-                  formatter={(value) => value.toFixed(2)}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="voltage"
-                  stroke="#2563eb"
-                  dot={false}
-                  isAnimationActive={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-        </Card>
-
-        <Card className="p-6">
-          <h2 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
-            <TrendingUp size={20} className="text-green-600" />
-            Power Consumption Analysis
-          </h2>
-          {loading ? (
-            <div className="h-80 flex items-center justify-center text-slate-500">
-              Loading...
-            </div>
-          ) : error ? (
-            <div className="h-80 flex items-center justify-center text-red-500">
-              {error}
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis
-                  dataKey="time"
-                  stroke="#64748b"
-                  style={{ fontSize: '12px' }}
-                  tick={{ angle: -45, textAnchor: 'end', height: 80 }}
-                />
-                <YAxis stroke="#64748b" style={{ fontSize: '12px' }} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#f8fafc',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '8px',
-                  }}
-                  formatter={(value) => `${value}W`}
-                />
-                <Bar dataKey="power" fill="#16a34a" />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </Card>
-      </div>
-
-      {/* Multi-metric Chart */}
-      <Card className="p-6">
-        <h2 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
-          <Calendar size={20} className="text-slate-600" />
-          {getRangeLabel(timeRange)} Overview
-        </h2>
-        {loading ? (
-          <div className="h-80 flex items-center justify-center text-slate-500">
-            Loading...
-          </div>
-        ) : error ? (
-          <div className="h-80 flex items-center justify-center text-red-500">
-            {error}
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={400}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis
-                dataKey="time"
-                stroke="#64748b"
-                style={{ fontSize: '12px' }}
-                tick={{ angle: -45, textAnchor: 'end', height: 80 }}
-              />
-              <YAxis stroke="#64748b" style={{ fontSize: '12px' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#f8fafc',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '8px',
-                }}
-              />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="voltage"
-                stroke="#2563eb"
-                dot={false}
-                isAnimationActive={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="current"
-                stroke="#f59e0b"
-                dot={false}
-                isAnimationActive={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="power"
-                stroke="#16a34a"
-                dot={false}
-                isAnimationActive={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </Card>
+      <CorrelationPanel data={chartData} metrics={metrics} />
     </div>
   );
 }

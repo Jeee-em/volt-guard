@@ -4,10 +4,11 @@ import { useState } from 'react';
 import { Zap, Activity, Gauge, PenLine } from 'lucide-react';
 import { MetricCard } from '@/components/dashboard/metric-card';
 import { SensorChart } from '@/components/dashboard/sensor-chart';
+import { SensorAreaChart } from '@/components/dashboard/sensor-area-chart';
 
 export default function DashboardPage() {
   const [selectedSensor] = useState('device_1');
-
+  
   // 🔥 MOCK DATA (inline, no separate file)
   const mockHistoricalData = Array.from({ length: 300 }, (_, i) => {
     const now = Date.now();
@@ -129,6 +130,6 @@ export default function DashboardPage() {
         error={error}
         metrics={metricsConfig}
       />
-    </div>
+    </div>  
   );
 }
