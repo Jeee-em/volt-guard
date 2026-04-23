@@ -15,6 +15,9 @@ import {
 import { useCallback } from 'react';
 import { MuteDuration, MuteState, NotificationCenterHeader } from '@/components/dashboard/notification-center-header';
 import { AlertRule, AlertRulesManager, RuleFormDraft } from '@/components/dashboard/alert-rules-manager';
+import { NotificationFeed, NotificationItem } from '@/components/dashboard/notification-feed';
+import { NotificationPreferences, NotificationPreferencesPanel } from '@/components/dashboard/notification-preference-panel';
+import { NotificationStatsItem, NotificationStatsStrip } from '@/components/dashboard/notification-stats-strip';
 
 interface Alert {
   id: string;
@@ -26,61 +29,107 @@ interface Alert {
   read: boolean;
 }
 
+const DEFAULT_PREFS: NotificationPreferences = {
+  matrix: {
+    critical: { in_app: true, email: true, sms: true },
+    warning: { in_app: true, email: true, sms: false },
+    info: { in_app: true, email: false, sms: false },
+  },
+  quietHours: {
+    enabled: true,
+    from: '22:00',
+    to: '07:00',
+    days: [0, 1, 2, 3, 4, 5, 6],
+  },
+  contact: {
+    email: 'engineer@example.com',
+    phone: '+63 912 345 6789',
+  },
+};
+
 export default function NotificationsPage() {
   const [rules, setRules] = useState<AlertRule[]>([
-        {
-            id: '1',
-            name: 'High current alert',
-            metric: 'current',
-            condition: 'above',
-            threshold: 18,
-            severity: 'critical',
-            enabled: true,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-        },
-    ]);
+    {
+      id: '1',
+      name: 'High current alert',
+      metric: 'current',
+      condition: 'above',
+      threshold: 18,
+      severity: 'critical',
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  ]);
   const [muteState, setMuteState] = useState<MuteState>({
     muted: false,
     until: null,
   });
 
+  const [notifications, setNotifications] = useState<NotificationItem[]>([
+    {
+      id: '1',
+      severity: 'critical',
+      status: 'unread',
+      metric: 'current',
+      title: 'Current spike detected',
+      description: 'Current exceeded critical threshold of 18 A. Immediate inspection recommended.',
+      value: 19.4,
+      unit: 'A',
+      threshold: 18,
+      ruleName: 'High current alert',
+      receivedAt: new Date().toISOString(),
+      analyticsHref: '/analytics?t=2025-04-22T14:03:11Z',
+    },
+  ]);
+
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSave = useCallback(async (prefs: NotificationPreferences) => {
+    setIsSaving(true);
+    await fetch('/api/preferences', {
+      method: 'PUT',
+      body: JSON.stringify(prefs),
+    });
+    setIsSaving(false);
+  }, []);
+
   const handleAdd = useCallback((draft: RuleFormDraft) => {
-        setRules((prev) => [...prev, {
-            ...draft,
-            id: crypto.randomUUID(),
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-        }]);
-    }, []);
+    setRules((prev) => [...prev, {
+      ...draft,
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }]);
+  }, []);
 
-    const handleEdit = useCallback((id: string, draft: RuleFormDraft) => {
-        setRules((prev) => prev.map((r) =>
-            r.id === id ? { ...r, ...draft, updatedAt: new Date().toISOString() } : r
-        ));
-    }, []);
+  const handleEdit = useCallback((id: string, draft: RuleFormDraft) => {
+    setRules((prev) => prev.map((r) =>
+      r.id === id ? { ...r, ...draft, updatedAt: new Date().toISOString() } : r
+    ));
+  }, []);
 
-    const handleDelete = useCallback((id: string) => {
-        setRules((prev) => prev.filter((r) => r.id !== id));
-    }, []);
+  const handleDelete = useCallback((id: string) => {
+    setRules((prev) => prev.filter((r) => r.id !== id));
+  }, []);
 
-    const handleDuplicate = useCallback((id: string) => {
-        const source = rules.find((r) => r.id === id);
-        if (!source) return;
-        setRules((prev) => [...prev, {
-            ...source,
-            id: crypto.randomUUID(),
-            name: `${source.name} (copy)`,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-        }]);
-    }, [rules]);
+  const handleDuplicate = useCallback((id: string) => {
+    const source = rules.find((r) => r.id === id);
+    if (!source) return;
+    setRules((prev) => [...prev, {
+      ...source,
+      id: crypto.randomUUID(),
+      name: `${source.name} (copy)`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }]);
+  }, [rules]);
 
-    const handleToggle = useCallback((id: string, enabled: boolean) => {
-        setRules((prev) => prev.map((r) =>
-            r.id === id ? { ...r, enabled, updatedAt: new Date().toISOString() } : r
-        ));
-    }, []);
+  const handleToggle = useCallback((id: string, enabled: boolean) => {
+    setRules((prev) => prev.map((r) =>
+      r.id === id ? { ...r, enabled, updatedAt: new Date().toISOString() } : r
+    ));
+  }, []);
 
   const handleMute = useCallback((duration: MuteDuration) => {
     setMuteState({
@@ -94,6 +143,30 @@ export default function NotificationsPage() {
   const handleUnmute = useCallback(() => {
     setMuteState({ muted: false, until: null });
   }, []);
+
+  const handleMarkRead = useCallback((id: string) => {
+    setNotifications((prev) =>
+      prev.map((n) => n.id === id ? { ...n, status: 'read' as const } : n)
+    );
+  }, []);
+
+  const handleMarkAllRead = useCallback(() => {
+    setNotifications((prev) =>
+      prev.map((n) => ({ ...n, status: 'read' as const }))
+    );
+  }, []);
+
+  const handleDismiss = useCallback((id: string) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  }, []);
+
+  const statsItems: NotificationStatsItem[] = notifications.map((n) => ({
+    id: n.id,
+    severity: n.severity,
+    status: n.status,
+    receivedAt: n.receivedAt,
+    // resolvedAt: n.resolvedAt,   // optional
+  }));
 
   return (
     <div className='container mx-auto p-6 space-y-8'>
@@ -109,13 +182,28 @@ export default function NotificationsPage() {
       />
 
       <AlertRulesManager
-            rules={rules}
-            onAdd={handleAdd}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            onDuplicate={handleDuplicate}
-            onToggle={handleToggle}
-        />
+        rules={rules}
+        onAdd={handleAdd}
+        onEdit={handleEdit}
+        onDelete={handleDelete}
+        onDuplicate={handleDuplicate}
+        onToggle={handleToggle}
+      />
+
+      <NotificationFeed
+        notifications={notifications}
+        onMarkRead={handleMarkRead}
+        onMarkAllRead={handleMarkAllRead}
+        onDismiss={handleDismiss}
+      />
+
+      <NotificationPreferencesPanel
+        initial={DEFAULT_PREFS}
+        onSave={handleSave}
+        isSaving={isSaving}
+      />
+
+      <NotificationStatsStrip notifications={statsItems} windowDays={7} />
     </div>
   );
 }

@@ -90,7 +90,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         items: [
           {
             title: "Device Management",
-            url: "/dashboard/admin/devices",
+            url: "/dashboard/admin/device-management",
           },
         ],
       });
