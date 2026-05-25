@@ -10,7 +10,6 @@ const _geistMono = Geist_Mono({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: 'VoltGuard',
   description: 'Real-time sensor monitoring and analytics platform',
-  generator: 'v0.app',
   icons: {
     icon: [
       {

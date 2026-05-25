@@ -18,6 +18,7 @@ import { Download, ImageDown, Filter } from 'lucide-react';
 
 interface ChartDataPoint {
     time: string;
+    timestamp?: number;
     voltage?: number;
     current?: number;
     power?: number;
@@ -52,6 +53,19 @@ const TIME_RANGES = [
 
 function filterByRange(data: ChartDataPoint[], seconds: number): ChartDataPoint[] {
     if (seconds === Infinity || data.length === 0) return data;
+    const hasTimestamps = data.some(
+        (point) => typeof point.timestamp === 'number' && Number.isFinite(point.timestamp)
+    );
+
+    if (hasTimestamps) {
+        const cutoff = Date.now() - seconds * 1000;
+        return data.filter((point) =>
+            typeof point.timestamp === 'number' &&
+            Number.isFinite(point.timestamp) &&
+            point.timestamp >= cutoff
+        );
+    }
+
     return data.slice(-Math.min(data.length, Math.ceil(seconds)));
 }
 

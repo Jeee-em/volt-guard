@@ -17,7 +17,7 @@ import { Download, Grid3X3, ScatterChart as ScatterIcon } from 'lucide-react';
 
 export interface SensorDataPoint {
     time: string;
-    [key: string]: string | number;
+    [key: string]: string | number | undefined;
 }
 
 export interface MetricMeta {

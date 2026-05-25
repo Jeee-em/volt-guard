@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { useDevices, Device } from '../hooks/useDevices';
+import { useDevices, Device } from '../hooks/use-devices';
 
 interface DeviceContextType {
     selectedDeviceId: string | null;
@@ -22,16 +22,22 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
 
     // Initialize from localStorage and auto-select first device
     useEffect(() => {
-        if (loading || devices.length === 0) return;
+        if (loading) return;
+
+        const stored = localStorage.getItem(STORAGE_KEY);
+
+        if (devices.length === 0) {
+            if (stored && stored !== selectedDeviceId) {
+                setSelectedDeviceId(stored);
+            }
+            return;
+        }
 
         // Try to get from localStorage
-        const stored = localStorage.getItem(STORAGE_KEY);
-        
         console.log('🔄 DeviceContext - Available devices:', devices.map(d => d.deviceId));
         console.log('💾 DeviceContext - Stored device from localStorage:', stored);
-        
+
         if (stored) {
-            // Check if stored device still exists
             const deviceExists = devices.some(d => d.deviceId === stored);
             if (deviceExists) {
                 console.log('✅ DeviceContext - Using stored device:', stored);
@@ -42,17 +48,15 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
             }
         }
 
-        // Auto-select first active device
         const firstActiveDevice = devices.find(d => d.status === 'active');
         if (firstActiveDevice) {
             setSelectedDeviceId(firstActiveDevice.deviceId);
             localStorage.setItem(STORAGE_KEY, firstActiveDevice.deviceId);
         } else if (devices.length > 0) {
-            // If no active device, select first available
             setSelectedDeviceId(devices[0].deviceId);
             localStorage.setItem(STORAGE_KEY, devices[0].deviceId);
         }
-    }, [devices, loading]);
+    }, [devices, loading, selectedDeviceId]);
 
     const setSelectedDevice = (deviceId: string) => {
         console.log('📱 DeviceContext - Setting device to:', deviceId);

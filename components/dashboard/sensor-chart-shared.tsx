@@ -3,6 +3,7 @@
 
 export interface ChartDataPoint {
     time: string;
+    timestamp?: number;
     voltage?: number;
     current?: number;
     power?: number;
@@ -40,6 +41,27 @@ export const CHART_RANGES: { value: ChartRange; label: string }[] = [
 
 export function filterByRange(data: ChartDataPoint[], range: ChartRange): ChartDataPoint[] {
     if (range === 'all' || data.length === 0) return data;
+    const rangeMs: Record<ChartRange, number> = {
+        '1m': 60_000,
+        '5m': 5 * 60_000,
+        '15m': 15 * 60_000,
+        '1h': 60 * 60_000,
+        all: Infinity,
+    };
+
+    const hasTimestamps = data.some(
+        (point) => typeof point.timestamp === 'number' && Number.isFinite(point.timestamp)
+    );
+
+    if (hasTimestamps) {
+        const cutoff = Date.now() - rangeMs[range];
+        return data.filter((point) =>
+            typeof point.timestamp === 'number' &&
+            Number.isFinite(point.timestamp) &&
+            point.timestamp >= cutoff
+        );
+    }
+
     const counts: Record<ChartRange, number> = {
         '1m': 60, '5m': 300, '15m': 900, '1h': 3600, all: Infinity,
     };
