@@ -18,6 +18,7 @@ import { AlertRule, AlertRulesManager, RuleFormDraft } from '@/components/dashbo
 import { NotificationFeed, NotificationItem } from '@/components/dashboard/notification-feed';
 import { NotificationPreferences, NotificationPreferencesPanel } from '@/components/dashboard/notification-preference-panel';
 import { NotificationStatsItem, NotificationStatsStrip } from '@/components/dashboard/notification-stats-strip';
+import { getMetricLabel, getMetricUnit, getThresholdForSeverity } from '@/lib/thresholds';
 
 interface Alert {
   id: string;
@@ -48,13 +49,17 @@ const DEFAULT_PREFS: NotificationPreferences = {
 };
 
 export default function NotificationsPage() {
-  const [rules, setRules] = useState<AlertRule[]>([
+  const currentThreshold = getThresholdForSeverity('current', 'critical');
+  const currentUnit = getMetricUnit('current');
+  const currentLabel = getMetricLabel('current');
+
+  const [rules, setRules] = useState<AlertRule[]>(() => [
     {
       id: '1',
       name: 'High current alert',
       metric: 'current',
       condition: 'above',
-      threshold: 18,
+      threshold: currentThreshold,
       severity: 'critical',
       enabled: true,
       createdAt: new Date().toISOString(),
@@ -66,17 +71,17 @@ export default function NotificationsPage() {
     until: null,
   });
 
-  const [notifications, setNotifications] = useState<NotificationItem[]>([
+  const [notifications, setNotifications] = useState<NotificationItem[]>(() => [
     {
       id: '1',
       severity: 'critical',
       status: 'unread',
       metric: 'current',
       title: 'Current spike detected',
-      description: 'Current exceeded critical threshold of 18 A. Immediate inspection recommended.',
-      value: 19.4,
-      unit: 'A',
-      threshold: 18,
+      description: `${currentLabel} exceeded critical threshold of ${currentThreshold} ${currentUnit}. Immediate inspection recommended.`,
+      value: Number((currentThreshold + 1.4).toFixed(1)),
+      unit: currentUnit,
+      threshold: currentThreshold,
       ruleName: 'High current alert',
       receivedAt: new Date().toISOString(),
       analyticsHref: '/analytics?t=2025-04-22T14:03:11Z',

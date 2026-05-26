@@ -30,7 +30,7 @@ import {
 
 export type RuleSeverity  = 'critical' | 'warning' | 'info';
 export type RuleCondition = 'above' | 'below' | 'equals';
-export type RuleMetric    = 'voltage' | 'current' | 'power' | 'power_factor';
+export type RuleMetric    = 'voltage' | 'current' | 'power' | 'power_loss' | 'power_factor';
 
 export interface AlertRule {
     id: string;
@@ -61,6 +61,7 @@ const METRIC_OPTIONS: { value: RuleMetric; label: string; unit: string }[] = [
     { value: 'voltage',      label: 'Voltage',      unit: 'V'  },
     { value: 'current',      label: 'Current',      unit: 'A'  },
     { value: 'power',        label: 'Power',        unit: 'W'  },
+    { value: 'power_loss',   label: 'Power Loss',   unit: 'W'  },
     { value: 'power_factor', label: 'Power Factor', unit: 'pf' },
 ];
 

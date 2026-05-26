@@ -2,8 +2,8 @@
 'use client';
 
 import { AnalyticsHeader } from "@/components/dashboard/analytics-header";
-import { AnomalyAlert, AnomalyAlertBanner } from "@/components/dashboard/anomaly-alert-banner";
-import { AnomalyHistoryTable, AnomalyRecord, AlertSeverity, AlertMetric } from "@/components/dashboard/anomaly-history-table";
+import { AnomalyAlertBanner } from "@/components/dashboard/anomaly-alert-banner";
+import { ReadingsTable, type ReadingRecord } from "@/components/dashboard/readings-table";
 import { CorrelationPanel } from "@/components/dashboard/correlation-panel";
 import { PowerMetricsGrid } from "@/components/dashboard/metric-card";
 import { SensorAreaChart } from "@/components/dashboard/sensor-area-chart";
@@ -11,27 +11,21 @@ import { SensorBarChart } from "@/components/dashboard/sensor-bar-chart";
 import { SensorChartGrid } from "@/components/dashboard/sensor-chart-grid";
 import { SensorLineChart } from "@/components/dashboard/sensor-line-chart";
 import { ThresholdStatsPanel } from "@/components/dashboard/threshold-stats-panel";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useAuth } from "@/context/AuthContext";
 import { useDevice } from "@/context/DeviceContext";
 import { useSensorData } from "@/hooks/use-sensor-data";
 import { usePowerLoss } from "@/hooks/use-power-loss";
+import { useAnomalyAlerts } from "@/hooks/use-anomaly-alerts";
+import { useThresholds } from "@/hooks/use-thresholds";
 import { selectPowerLossDeviceIds } from "@/lib/device-utils";
 import { buildSensorChartData } from "@/lib/sensor-chart-utils";
-
-const METRICS = [
-  {
-    key: 'voltage', label: 'Voltage', unit: 'V', color: '#378ADD',
-    defaultThresholds: { warning: 240, critical: 250 }
-  },
-  {
-    key: 'current', label: 'Current', unit: 'A', color: '#BA7517',
-    defaultThresholds: { warning: 16, critical: 18 }
-  },
-  {
-    key: 'power', label: 'Power', unit: 'W', color: '#1D9E75',
-    defaultThresholds: { warning: 3500, critical: 4500 }
-  },
-];
+import { useToast } from "@/hooks/use-toast";
+import {
+  THRESHOLD_METRICS,
+  getMetricLabel,
+  type ThresholdMetricKey,
+} from "@/lib/thresholds";
 
 const DEFAULT_POWER_LOSS_DEVICE_IDS = {
   device1Id: 'power_monitor_01',
@@ -40,11 +34,8 @@ const DEFAULT_POWER_LOSS_DEVICE_IDS = {
 };
 const POWER_LOSS_BUCKET_MS = 60_000;
 
-// Threshold types for anomaly detection
-type Threshold = { warning: number; critical: number };
-type ThresholdConfig = Record<string, Threshold>;
-
 export default function AnalyticsPage() {
+  const { user } = useAuth();
   const { selectedDeviceId, selectedDevice, availableDevices } = useDevice();
   const activeDeviceId = selectedDeviceId ?? undefined;
 
@@ -75,25 +66,35 @@ export default function AnalyticsPage() {
   );
 
   const handleRefresh = () => { /* re-fetch your sensor data */ };
-  const [thresholds, setThresholds] = useState<ThresholdConfig>(
-    Object.fromEntries(METRICS.map((m) => [m.key, m.defaultThresholds])) as ThresholdConfig
-  );
+  const {
+    thresholds,
+    saveThreshold,
+    resetThreshold,
+    saving,
+    lastSavedAt,
+    lastSavedMetric,
+    lastSavedAction,
+  } = useThresholds(user?.uid);
+  const { toast } = useToast();
+  const lastToastAt = useRef<number | null>(null);
 
   const handleThresholdChange = useCallback(
-    (key: string, type: 'warning' | 'critical', value: number) => {
-      setThresholds((prev) => ({
-        ...prev,
-        [key]: { ...prev[key], [type]: value },
-      }));
-      // Your anomaly detection logic re-runs here with new thresholds
+    (key: ThresholdMetricKey, type: 'warning' | 'critical', value: number) => {
+      saveThreshold(key, { ...thresholds[key], [type]: value });
     },
-    []
+    [saveThreshold, thresholds]
   );
 
-  const handleThresholdReset = useCallback((key: string) => {
-    const meta = METRICS.find((m) => m.key === key);
-    if (meta) setThresholds((prev) => ({ ...prev, [key]: meta.defaultThresholds }));
-  }, []);
+  const handleThresholdSave = useCallback(
+    (key: ThresholdMetricKey, values: { warning: number; critical: number }) => {
+      saveThreshold(key, values);
+    },
+    [saveThreshold]
+  );
+
+  const handleThresholdReset = useCallback((key: ThresholdMetricKey) => {
+    resetThreshold(key);
+  }, [resetThreshold]);
 
   const chartData = useMemo(
     () => buildSensorChartData(sensorData, losses, POWER_LOSS_BUCKET_MS),
@@ -103,76 +104,57 @@ export default function AnalyticsPage() {
   const chartLoading = sensorLoading || lossLoading;
   const chartError = sensorError?.message ?? lossError?.message ?? null;
 
-  const [alerts, setAlerts] = useState<AnomalyAlert[]>([
-    {
-      id: '1',
-      severity: 'critical',
-      status: 'active',
-      metric: 'current',
-      message: 'Current spike detected — exceeded critical threshold.',
-      value: 18.9,
-      unit: 'A',
-      threshold: 18,
-      timestamp: new Date().toISOString(),
-    },
-  ]);
+  const { alerts, dismissAlert, clearResolved } = useAnomalyAlerts(chartData, thresholds);
 
-  const metrics = [
-    { key: 'voltage', color: '#378ADD', label: 'Voltage', unit: 'V' },
-    { key: 'current', color: '#BA7517', label: 'Current', unit: 'A' },
-    { key: 'power', color: '#1D9E75', label: 'Power', unit: 'W' },
-  ];
+  const correlationMetrics = THRESHOLD_METRICS.filter((metric) => metric.key !== 'power_loss');
 
-  const chartMetrics = [
-    { key: 'voltage', color: '#378ADD', label: 'Voltage' },
-    { key: 'current', color: '#BA7517', label: 'Current' },
-    { key: 'power', color: '#1D9E75', label: 'Power' },
-    { key: 'power_loss', color: '#B91C1C', label: 'Power Loss' },
-  ];
-  const records: AnomalyRecord[] = Array.from({ length: 12 }).map((_, i) => {
-    const minutesAgo = (12 - i) * 5; // spread entries across the past hour
-    const triggeredAt = new Date(Date.now() - minutesAgo * 60 * 1000).toISOString();
-    const resolvedAt = new Date(Date.now() - (minutesAgo - 2) * 60 * 1000).toISOString();
-    const isActive = i % 3 === 0; // some active, some resolved
-    const sev: AlertSeverity = (i % 4 === 0 ? 'critical' : i % 4 === 1 ? 'warning' : 'info');
-    const metricKey: AlertMetric = (i % 2 === 0 ? 'current' : 'voltage');
-    const value = Math.round((metricKey === 'current' ? 18 + Math.random() * 2 : 230 + Math.random() * 4) * 10) / 10;
-    return {
-      id: String(i + 1),
-      severity: sev,
-      status: isActive ? 'active' : 'resolved',
-      metric: metricKey,
-      message: `${metricKey === 'current' ? 'Current spike' : 'Voltage fluctuation'} detected — check thresholds.`,
-      value,
-      unit: metricKey === 'current' ? 'A' : 'V',
-      threshold: metricKey === 'current' ? 18 : 230,
-      triggeredAt,
-      resolvedAt: isActive ? undefined : resolvedAt,
-      duration: isActive ? undefined : 120,
-    } as AnomalyRecord;
-  });
+  const chartMetrics = THRESHOLD_METRICS.map(({ key, color, label }) => ({
+    key,
+    color,
+    label,
+  }));
+
+  useEffect(() => {
+    if (!lastSavedAt || lastToastAt.current === lastSavedAt) return;
+    lastToastAt.current = lastSavedAt;
+    const title = lastSavedAction === 'reset' ? 'Thresholds reset' : 'Thresholds saved';
+    const description = lastSavedMetric
+      ? `${getMetricLabel(lastSavedMetric)} updated`
+      : 'Your thresholds are up to date.';
+    toast({ title, description });
+  }, [lastSavedAction, lastSavedAt, lastSavedMetric, toast]);
+
+  const readingRecords = useMemo<ReadingRecord[]>(() => {
+    if (chartData.length === 0) return [];
+    return chartData.flatMap((point) => {
+      if (typeof point.timestamp !== 'number' || !Number.isFinite(point.timestamp)) return [];
+      const recordedAt = new Date(point.timestamp).toISOString();
+      return THRESHOLD_METRICS.flatMap((metric) => {
+        const value = point[metric.key];
+        if (typeof value !== 'number' || !Number.isFinite(value)) return [];
+        return [{
+          id: `${point.timestamp}-${metric.key}`,
+          metric: metric.key,
+          value,
+          unit: metric.unit,
+          recordedAt,
+        }];
+      });
+    });
+  }, [chartData]);
 
   return (
     <div className="container mx-auto p-6 space-y-8">
-      <AnalyticsHeader
-        isConnected={!sensorError && !sensorLoading}
-        deviceName={selectedDevice?.name ?? 'Sensor Feed'}
-        onRangeChange={(range) => console.log('range:', range)}
-        onRefreshIntervalChange={(interval) => console.log('interval:', interval)}
-        onRefresh={handleRefresh}
-        loading={sensorLoading}
-      />
       <PowerMetricsGrid
         deviceId={activeDeviceId}
+        device1Id={powerLossDeviceIds.device1Id}
+        device2Id={powerLossDeviceIds.device2Id}
+        device3Id={powerLossDeviceIds.device3Id}
         maxWatts={3000}
         maxVoltage={240}
         maxCurrent={16}
       />
-      <AnomalyAlertBanner
-        alerts={alerts}
-        onDismiss={(id) => setAlerts((prev) => prev.filter((a) => a.id !== id))}
-        onClearResolved={() => setAlerts((prev) => prev.filter((a) => a.status === 'active'))}
-      />
+
       <SensorChartGrid layout="1+2" title="Sensor Readings">
         <SensorLineChart
           title="Live Signal"
@@ -198,16 +180,25 @@ export default function AnalyticsPage() {
       </SensorChartGrid>
 
       <ThresholdStatsPanel
-        metrics={METRICS}
+        metrics={THRESHOLD_METRICS}
         data={chartData}
         thresholds={thresholds}
         onThresholdChange={handleThresholdChange}
+        onThresholdSave={handleThresholdSave}
         onThresholdReset={handleThresholdReset}
+        saving={saving}
       />
 
-      <AnomalyHistoryTable records={records} pageSize={10} />
+      <AnomalyAlertBanner
+        alerts={alerts}
+        onDismiss={dismissAlert}
+        onClearResolved={clearResolved}
+      />
 
-      <CorrelationPanel data={chartData} metrics={metrics} />
+      <ReadingsTable 
+        records={readingRecords} 
+        thresholds={thresholds} 
+        pageSize={10} />
     </div>
   );
 }

@@ -34,7 +34,7 @@ import {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type NotificationSeverity = 'critical' | 'warning' | 'info';
-export type NotificationMetric   = 'voltage' | 'current' | 'power' | 'power_factor';
+export type NotificationMetric   = 'voltage' | 'current' | 'power' | 'power_loss' | 'power_factor';
 export type NotificationStatus   = 'unread' | 'read';
 
 export interface NotificationItem {
@@ -112,6 +112,7 @@ const METRIC_CFG = {
     voltage:      { label: 'Voltage',      icon: Zap,      unit: 'V'  },
     current:      { label: 'Current',      icon: Activity, unit: 'A'  },
     power:        { label: 'Power',        icon: Gauge,    unit: 'W'  },
+    power_loss:   { label: 'Power Loss',   icon: AlertTriangle, unit: 'W'  },
     power_factor: { label: 'Power Factor', icon: PenLine,  unit: 'pf' },
 } as const satisfies Record<NotificationMetric, {
     label: string;

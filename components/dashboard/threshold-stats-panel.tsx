@@ -1,39 +1,21 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Minus, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
+import type { ChartDataPoint } from '@/components/dashboard/sensor-chart-shared';
+import type { SignalThreshold, ThresholdConfig, ThresholdMetricKey, ThresholdMetricMeta } from '@/lib/thresholds';
 import { Input } from '@/components/ui/input';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface SignalThreshold {
-    warning: number;
-    critical: number;
-}
-
-export interface ThresholdConfig {
-    [metricKey: string]: SignalThreshold;
-}
-
-export interface MetricMeta {
-    key: string;
-    label: string;
-    unit: string;
-    color: string;
-    defaultThresholds: SignalThreshold;
-}
-
-interface ChartDataPoint {
-    time: string;
-    [key: string]: string | number | undefined;
-}
-
 export interface ThresholdStatsPanelProps {
-    metrics: MetricMeta[];
+    metrics: ThresholdMetricMeta[];
     data: ChartDataPoint[];
     thresholds: ThresholdConfig;
-    onThresholdChange: (metricKey: string, type: 'warning' | 'critical', value: number) => void;
-    onThresholdReset?: (metricKey: string) => void;
+    onThresholdChange: (metricKey: ThresholdMetricKey, type: 'warning' | 'critical', value: number) => void;
+    onThresholdSave?: (metricKey: ThresholdMetricKey, values: SignalThreshold) => void;
+    onThresholdReset?: (metricKey: ThresholdMetricKey) => void;
+    saving?: boolean;
 }
 
 // ─── Statistics calculation ───────────────────────────────────────────────────
@@ -47,7 +29,7 @@ interface SignalStats {
     trend: 'up' | 'down' | 'stable';
 }
 
-function computeStats(data: ChartDataPoint[], key: string): SignalStats | null {
+function computeStats(data: ChartDataPoint[], key: ThresholdMetricKey): SignalStats | null {
     const values = data
         .map((d) => d[key])
         .filter((v): v is number => typeof v === 'number' && !isNaN(v));
@@ -77,7 +59,26 @@ function fmt(n: number, decimals = 2) {
     return n.toFixed(decimals);
 }
 
-function getThresholdStatus(value: number, threshold: SignalThreshold): 'critical' | 'warning' | 'normal' {
+function clamp(value: number, min: number, max: number) {
+    return Math.min(max, Math.max(min, value));
+}
+
+function toPercent(value: number, min: number, max: number, fallback = 0) {
+    if (!Number.isFinite(value) || !Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+        return fallback;
+    }
+    return clamp(((value - min) / (max - min)) * 100, 0, 100);
+}
+
+type ThresholdStatus = 'critical' | 'warning' | 'normal' | 'no-signal';
+
+function getThresholdStatus(
+    value: number,
+    threshold: SignalThreshold,
+    meta: ThresholdMetricMeta
+): ThresholdStatus {
+    const zeroStatus = meta.zeroStatus ?? 'no-signal';
+    if (value === 0 && zeroStatus === 'no-signal') return 'no-signal';
     if (value >= threshold.critical) return 'critical';
     if (value >= threshold.warning) return 'warning';
     return 'normal';
@@ -106,14 +107,12 @@ function ThresholdInput({
     value,
     unit,
     type,
-    color,
     onChange,
 }: {
     label: string;
     value: number;
     unit: string;
     type: 'warning' | 'critical';
-    color: string;
     onChange: (v: number) => void;
 }) {
     const Icon = type === 'critical' ? AlertCircle : AlertTriangle;
@@ -149,23 +148,58 @@ function MetricPanel({
     stats,
     threshold,
     onThresholdChange,
-    onReset,
+    onThresholdSave,
+    onResetToDefault,
+    saving,
 }: {
-    meta: MetricMeta;
+    meta: ThresholdMetricMeta;
     stats: SignalStats | null;
     threshold: SignalThreshold;
     onThresholdChange: (type: 'warning' | 'critical', value: number) => void;
-    onReset: () => void;
+    onThresholdSave?: (values: SignalThreshold) => void;
+    onResetToDefault?: () => void;
+    saving?: boolean;
 }) {
     const [open, setOpen] = useState(true);
+    const [draft, setDraft] = useState<SignalThreshold>(threshold);
 
-    const status = stats ? getThresholdStatus(stats.latest, threshold) : 'normal';
+    useEffect(() => {
+        setDraft(threshold);
+    }, [threshold.warning, threshold.critical]);
+
+    const isDirty = draft.warning !== threshold.warning || draft.critical !== threshold.critical;
+    const isInvalid = draft.warning >= draft.critical;
+    const canSave = isDirty && !isInvalid && !saving;
+
+    const handleSave = () => {
+        if (!canSave) return;
+        const isDefault =
+            draft.warning === meta.defaultThresholds.warning &&
+            draft.critical === meta.defaultThresholds.critical;
+        if (isDefault && onResetToDefault) {
+            onResetToDefault();
+            return;
+        }
+        if (onThresholdSave) {
+            onThresholdSave(draft);
+            return;
+        }
+        if (draft.warning !== threshold.warning) {
+            onThresholdChange('warning', draft.warning);
+        }
+        if (draft.critical !== threshold.critical) {
+            onThresholdChange('critical', draft.critical);
+        }
+    };
+
+    const status = stats ? getThresholdStatus(stats.latest, draft, meta) : 'normal';
     const statusColors = {
         critical: 'text-red-500 bg-red-50 border-red-200 dark:bg-red-950/40 dark:border-red-800',
         warning:  'text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-950/40 dark:border-amber-800',
         normal:   'text-green-600 bg-green-50 border-green-200 dark:bg-green-950/40 dark:border-green-800',
+        'no-signal': 'text-slate-600 bg-slate-50 border-slate-200 dark:bg-slate-950/40 dark:border-slate-800',
     };
-    const statusLabel = { critical: 'Critical', warning: 'Warning', normal: 'Normal' };
+    const statusLabel = { critical: 'Critical', warning: 'Warning', normal: 'Normal', 'no-signal': 'No Signal' };
 
     const TrendIcon =
         stats?.trend === 'up' ? TrendingUp :
@@ -173,6 +207,13 @@ function MetricPanel({
     const trendColor =
         stats?.trend === 'up' ? 'text-red-400' :
         stats?.trend === 'down' ? 'text-green-400' : 'text-muted-foreground';
+
+    const hasRange = Boolean(stats && stats.max > stats.min);
+    const warnPct = stats ? toPercent(draft.warning, stats.min, stats.max) : 0;
+    const critPct = stats ? toPercent(draft.critical, stats.min, stats.max) : 0;
+    const latestPct = stats ? toPercent(stats.latest, stats.min, stats.max, 50) : 0;
+    const warnStart = Math.min(warnPct, critPct);
+    const critStart = Math.max(warnPct, critPct);
 
     return (
         <div className="overflow-hidden rounded-xl border border-border bg-background">
@@ -250,27 +291,30 @@ function MetricPanel({
                                         <span>{fmt(stats.max)} {meta.unit}</span>
                                     </div>
                                     <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                                        {/* Warning zone */}
-                                        <div
-                                            className="absolute inset-y-0 bg-amber-200 dark:bg-amber-900"
-                                            style={{
-                                                left: `${((threshold.warning - stats.min) / (stats.max - stats.min)) * 100}%`,
-                                                right: `${100 - ((threshold.critical - stats.min) / (stats.max - stats.min)) * 100}%`,
-                                            }}
-                                        />
-                                        {/* Critical zone */}
-                                        <div
-                                            className="absolute inset-y-0 bg-red-200 dark:bg-red-900"
-                                            style={{
-                                                left: `${Math.min(((threshold.critical - stats.min) / (stats.max - stats.min)) * 100, 100)}%`,
-                                                right: 0,
-                                            }}
-                                        />
+                                            {/* Warning/Critical zones */}
+                                            {hasRange && (
+                                                <>
+                                                    <div
+                                                        className="absolute inset-y-0 bg-amber-200 dark:bg-amber-900"
+                                                        style={{
+                                                            left: `${warnStart}%`,
+                                                            right: `${100 - critStart}%`,
+                                                        }}
+                                                    />
+                                                    <div
+                                                        className="absolute inset-y-0 bg-red-200 dark:bg-red-900"
+                                                        style={{
+                                                            left: `${critStart}%`,
+                                                            right: 0,
+                                                        }}
+                                                    />
+                                                </>
+                                            )}
                                         {/* Latest marker */}
                                         <div
                                             className="absolute top-1/2 h-3 w-0.5 -translate-y-1/2 rounded-full bg-foreground"
                                             style={{
-                                                left: `${Math.min(Math.max(((stats.latest - stats.min) / (stats.max - stats.min)) * 100, 0), 100)}%`,
+                                                    left: `${latestPct}%`,
                                             }}
                                         />
                                     </div>
@@ -284,36 +328,43 @@ function MetricPanel({
                                 <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                                     Thresholds
                                 </p>
-                                <button
-                                    onClick={onReset}
-                                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                                    title="Reset to defaults"
-                                >
-                                    <RotateCcw className="h-2.5 w-2.5" />
-                                    Reset
-                                </button>
+                                <div className="flex items-center gap-1">
+                                    <button
+                                        onClick={() => setDraft({ ...meta.defaultThresholds })}
+                                        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                        title="Reset to defaults"
+                                    >
+                                        <RotateCcw className="h-2.5 w-2.5" />
+                                        Reset
+                                    </button>
+                                    <button
+                                        onClick={handleSave}
+                                        disabled={!canSave}
+                                        className="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
+                                    >
+                                        Save
+                                    </button>
+                                </div>
                             </div>
                             <div className="space-y-2">
                                 <ThresholdInput
                                     label="Warning"
-                                    value={threshold.warning}
+                                    value={draft.warning}
                                     unit={meta.unit}
                                     type="warning"
-                                    color={meta.color}
-                                    onChange={(v) => onThresholdChange('warning', v)}
+                                    onChange={(v) => setDraft((prev) => ({ ...prev, warning: v }))}
                                 />
                                 <ThresholdInput
                                     label="Critical"
-                                    value={threshold.critical}
+                                    value={draft.critical}
                                     unit={meta.unit}
                                     type="critical"
-                                    color={meta.color}
-                                    onChange={(v) => onThresholdChange('critical', v)}
+                                    onChange={(v) => setDraft((prev) => ({ ...prev, critical: v }))}
                                 />
                             </div>
 
                             {/* Validation hint */}
-                            {threshold.warning >= threshold.critical && (
+                            {isInvalid && (
                                 <p className="mt-2 text-[11px] text-red-500">
                                     Warning must be below critical threshold.
                                 </p>
@@ -333,7 +384,9 @@ export function ThresholdStatsPanel({
     data,
     thresholds,
     onThresholdChange,
+    onThresholdSave,
     onThresholdReset,
+    saving,
 }: ThresholdStatsPanelProps) {
     const statsMap = useMemo(() => {
         const map: Record<string, SignalStats | null> = {};
@@ -343,34 +396,42 @@ export function ThresholdStatsPanel({
         return map;
     }, [data, metrics]);
 
+    const sampleLabel = data.length === 1 ? 'sample' : 'samples';
+
     return (
         <section className="space-y-3">
             {/* Section header */}
             <div className="flex items-center gap-3">
-                <h2 className="font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
+                <h2 className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                     Statistics & Thresholds
                 </h2>
                 <div className="h-px flex-1 bg-border" />
                 <span className="text-[11px] text-muted-foreground">
-                    {data.length} samples
+                    {data.length} {sampleLabel}
                 </span>
             </div>
 
             {/* One panel per metric */}
-            <div className="space-y-2">
-                {metrics.map((meta) => (
-                    <MetricPanel
-                        key={meta.key}
-                        meta={meta}
-                        stats={statsMap[meta.key]}
-                        threshold={thresholds[meta.key]}
-                        onThresholdChange={(type, value) =>
-                            onThresholdChange(meta.key, type, value)
-                        }
-                        onReset={() => onThresholdReset?.(meta.key)}
-                    />
-                ))}
-            </div>
+            {metrics.length === 0 ? (
+                <p className="text-[12px] text-muted-foreground">No metrics configured.</p>
+            ) : (
+                <div className="space-y-2">
+                    {metrics.map((meta) => (
+                        <MetricPanel
+                            key={meta.key}
+                            meta={meta}
+                            stats={statsMap[meta.key]}
+                            threshold={thresholds[meta.key] ?? meta.defaultThresholds}
+                            onThresholdChange={(type, value) =>
+                                onThresholdChange(meta.key, type, value)
+                            }
+                            onThresholdSave={(values) => onThresholdSave?.(meta.key, values)}
+                            onResetToDefault={() => onThresholdReset?.(meta.key)}
+                            saving={saving}
+                        />
+                    ))}
+                </div>
+            )}
         </section>
     );
 }

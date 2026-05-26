@@ -19,7 +19,7 @@ import { Badge } from '@/components/ui/badge';
 
 export type AlertSeverity = 'critical' | 'warning' | 'info';
 export type AlertStatus = 'active' | 'resolved';
-export type AlertMetric = 'voltage' | 'current' | 'power' | 'power_factor';
+export type AlertMetric = 'voltage' | 'current' | 'power' | 'power_loss' | 'power_factor';
 
 export interface AnomalyAlert {
     id: string;
@@ -75,6 +75,7 @@ const METRIC_LABELS: Record<AlertMetric, string> = {
     voltage: 'Voltage',
     current: 'Current',
     power: 'Power',
+    power_loss: 'Power Loss',
     power_factor: 'Power Factor',
 };
 

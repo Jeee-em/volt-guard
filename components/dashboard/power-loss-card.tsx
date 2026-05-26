@@ -4,8 +4,9 @@ import { Card } from '@/components/ui/card';
 import { Zap } from 'lucide-react';
 import { usePowerLoss } from '@/hooks/use-power-loss';
 import { formatDistanceToNowStrict } from 'date-fns';
+import { getThresholdValue, type SignalThreshold } from '@/lib/thresholds';
 
-interface PowerLossCardProps {
+export interface PowerLossCardProps {
     device1Id: string;
     device2Id: string;
     device3Id: string;
@@ -13,6 +14,8 @@ interface PowerLossCardProps {
     bucketMs?: number;
     /** Skew threshold in ms above which a warning is shown. Default: 15_000 (15s) */
     skewWarnMs?: number;
+    /** Optional override thresholds for power loss status */
+    thresholds?: SignalThreshold;
 }
 
 const SKEW_WARN_DEFAULT = 15_000;
@@ -23,6 +26,7 @@ export function PowerLossCard({
     device3Id,
     bucketMs = 120_000,
     skewWarnMs = SKEW_WARN_DEFAULT,
+    thresholds,
 }: PowerLossCardProps) {
     const { latest, losses, loading, error } = usePowerLoss(device1Id, device2Id, device3Id, { bucketMs });
 
@@ -34,17 +38,25 @@ export function PowerLossCard({
     const skewMs = latest?.skewMs ?? 0;
     const highSkew = skewMs > skewWarnMs;
 
+    const warningThreshold = thresholds?.warning ?? getThresholdValue('power_loss', 'warning');
+    const criticalThreshold = thresholds?.critical ?? getThresholdValue('power_loss', 'critical');
+
     const isNegative = totalLoss < 0;
-    const isHigh = totalLoss > 100;
+    const isCritical = totalLoss >= criticalThreshold;
+    const isWarning = totalLoss >= warningThreshold && !isCritical;
 
     const colorClass = isNegative
         ? 'text-rose-600 dark:text-rose-400'
-        : isHigh
+        : isCritical
+        ? 'text-red-600 dark:text-red-400'
+        : isWarning
         ? 'text-amber-600 dark:text-amber-400'
         : 'text-emerald-600 dark:text-emerald-400';
     const bgClass = isNegative
         ? 'bg-rose-100 dark:bg-rose-900/40'
-        : isHigh
+        : isCritical
+        ? 'bg-red-100 dark:bg-red-900/40'
+        : isWarning
         ? 'bg-amber-100 dark:bg-amber-900/40'
         : 'bg-emerald-100 dark:bg-emerald-900/40';
 
@@ -54,7 +66,9 @@ export function PowerLossCard({
         ? 'Error'
         : isNegative
         ? 'Check Wiring'
-        : isHigh
+        : isCritical
+        ? 'Critical Loss'
+        : isWarning
         ? 'High Loss'
         : losses.length === 0
         ? 'Syncing'

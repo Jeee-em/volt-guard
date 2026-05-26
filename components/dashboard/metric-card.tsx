@@ -282,23 +282,25 @@ export function PowerMetricsGrid({
     bucketMs,
     skewWarnMs,
 }: PowerMetricsGridProps) {
+    const showPowerLoss = Boolean(device1Id && device2Id && device3Id);
+
     return (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-6">
             {/* Row 1: Total Power + Power Loss side by side */}
-            <div className="md:col-span-3">
+            <div className={showPowerLoss ? 'md:col-span-3' : 'md:col-span-6'}>
                 <TotalPowerCard deviceId={deviceId} maxWatts={maxWatts} />
             </div>
-            <div className="md:col-span-3">
-                {device1Id && device2Id && device3Id ? (
+            {showPowerLoss && (
+                <div className="md:col-span-3">
                     <PowerLossCard
-                        device1Id={device1Id}
-                        device2Id={device2Id}
-                        device3Id={device3Id}
+                        device1Id={device1Id!}
+                        device2Id={device2Id!}
+                        device3Id={device3Id!}
                         bucketMs={bucketMs}
                         skewWarnMs={skewWarnMs}
                     />
-                ) : null}
-            </div>
+                </div>
+            )}
             {/* Row 2: Phase cards */}
             <div className="md:col-span-2">
                 <PhaseCard phase="p1" deviceId={deviceId} maxVoltage={maxVoltage} maxCurrent={maxCurrent} />
