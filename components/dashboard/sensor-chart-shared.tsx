@@ -29,43 +29,84 @@ export interface BaseChartProps {
 
 // ─── Shared time-range filter ─────────────────────────────────────────────────
 
-export type ChartRange = '1m' | '5m' | '15m' | '1h' | 'all';
+export type ChartRange = 'realtime' | 'today' | '24h' | '7d' | '30d' | 'custom';
 
 export const CHART_RANGES: { value: ChartRange; label: string }[] = [
-    { value: '1m',  label: '1m' },
-    { value: '5m',  label: '5m' },
-    { value: '15m', label: '15m' },
-    { value: '1h',  label: '1h' },
-    { value: 'all', label: 'All' },
+    { value: 'realtime', label: 'Real-Time' },
+    { value: 'today', label: 'Today' },
+    { value: '24h', label: 'Last 24 Hours' },
+    { value: '7d', label: 'Last 7 Days' },
+    { value: '30d', label: 'Last 30 Days' },
+    { value: 'custom', label: 'Custom' },
 ];
 
-export function filterByRange(data: ChartDataPoint[], range: ChartRange): ChartDataPoint[] {
-    if (range === 'all' || data.length === 0) return data;
-    const rangeMs: Record<ChartRange, number> = {
-        '1m': 60_000,
-        '5m': 5 * 60_000,
-        '15m': 15 * 60_000,
-        '1h': 60 * 60_000,
-        all: Infinity,
-    };
+import type { DateRange } from 'react-day-picker';
+
+function startOfDay(date: Date): number {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+}
+
+function endOfDay(date: Date): number {
+    const d = new Date(date);
+    d.setHours(23, 59, 59, 999);
+    return d.getTime();
+}
+
+export function filterByRange(
+    data: ChartDataPoint[],
+    range: ChartRange,
+    customRange?: DateRange
+): ChartDataPoint[] {
+    if (data.length === 0) return data;
 
     const hasTimestamps = data.some(
         (point) => typeof point.timestamp === 'number' && Number.isFinite(point.timestamp)
     );
 
-    if (hasTimestamps) {
-        const cutoff = Date.now() - rangeMs[range];
-        return data.filter((point) =>
-            typeof point.timestamp === 'number' &&
-            Number.isFinite(point.timestamp) &&
-            point.timestamp >= cutoff
-        );
+    if (range === 'realtime') {
+        if (!hasTimestamps) return data.slice(-10);
+        const sorted = [...data]
+            .filter((point) => typeof point.timestamp === 'number' && Number.isFinite(point.timestamp))
+            .sort((a, b) => (a.timestamp as number) - (b.timestamp as number));
+        return sorted.slice(-10);
     }
 
-    const counts: Record<ChartRange, number> = {
-        '1m': 60, '5m': 300, '15m': 900, '1h': 3600, all: Infinity,
-    };
-    return data.slice(-counts[range]);
+    if (!hasTimestamps) return data;
+
+    const now = Date.now();
+    let start = Number.NEGATIVE_INFINITY;
+    let end = now;
+
+    if (range === 'today') {
+        start = startOfDay(new Date(now));
+    } else if (range === '24h') {
+        start = now - 24 * 60 * 60 * 1000;
+    } else if (range === '7d') {
+        const d = new Date(now);
+        d.setDate(d.getDate() - 6);
+        start = startOfDay(d);
+    } else if (range === '30d') {
+        const d = new Date(now);
+        d.setDate(d.getDate() - 29);
+        start = startOfDay(d);
+    } else if (range === 'custom') {
+        const from = customRange?.from ? startOfDay(customRange.from) : undefined;
+        const to = customRange?.to
+            ? endOfDay(customRange.to)
+            : customRange?.from
+            ? endOfDay(customRange.from)
+            : undefined;
+        if (from === undefined && to === undefined) return data;
+        start = from ?? Number.NEGATIVE_INFINITY;
+        end = to ?? now;
+    }
+
+    return data.filter((point) => {
+        const ts = point.timestamp;
+        return typeof ts === 'number' && Number.isFinite(ts) && ts >= start && ts <= end;
+    });
 }
 
 // ─── CSV download ─────────────────────────────────────────────────────────────
@@ -110,9 +151,17 @@ export function ChartTooltip({ active, payload, label }: any) {
 // ─── Shared chart card shell ──────────────────────────────────────────────────
 // Wraps the title, controls strip, and chart area in a consistent card frame.
 
-import { useRef, useState, useCallback } from 'react';
-import type { RefObject } from 'react';
-import { Download, ImageDown, Filter } from 'lucide-react';
+import { useState, type RefObject } from 'react';
+import { Download, ImageDown, Filter, ChevronDown, Check } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
+import { Button } from '@/components/ui/button';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 interface ChartShellProps {
     title: string;
@@ -120,6 +169,8 @@ interface ChartShellProps {
     dataLength: number;
     activeRange: ChartRange;
     onRangeChange: (r: ChartRange) => void;
+    customRange?: DateRange;
+    onCustomRangeChange?: (range: DateRange | undefined) => void;
     metrics: MetricConfig[];
     visibleSeries: Set<string>;
     onToggleSeries: (key: string) => void;
@@ -130,12 +181,22 @@ interface ChartShellProps {
     chartRef?: RefObject<HTMLDivElement | null>;
 }
 
+function formatRangeLabel(range?: DateRange): string {
+    if (!range?.from) return 'Custom';
+    const fromLabel = range.from.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    if (!range.to) return `${fromLabel} - ...`;
+    const toLabel = range.to.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return `${fromLabel} - ${toLabel}`;
+}
+
 export function ChartShell({
     title,
     description,
     dataLength,
     activeRange,
     onRangeChange,
+    customRange,
+    onCustomRangeChange,
     metrics,
     visibleSeries,
     onToggleSeries,
@@ -145,6 +206,12 @@ export function ChartShell({
     children,
     chartRef,
 }: ChartShellProps) {
+    const [customOpen, setCustomOpen] = useState(false);
+    const activeLabel =
+        activeRange === 'custom'
+            ? formatRangeLabel(customRange)
+            : CHART_RANGES.find((range) => range.value === activeRange)?.label ?? 'Range';
+
     return (
         <div className="overflow-hidden rounded-xl border border-border bg-background shadow-sm">
             {/* Header */}
@@ -177,27 +244,68 @@ export function ChartShell({
             </div>
 
             {/* Controls */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/20 px-5 py-2">
+            <div className="flex flex-col gap-2 border-b border-border bg-muted/20 px-5 py-2 sm:flex-row sm:items-center sm:justify-between">
                 {/* Range */}
-                <div className="flex items-center gap-1.5">
-                    <Filter className="h-3 w-3 text-muted-foreground" />
-                    {CHART_RANGES.map(({ value, label }) => (
-                        <button
-                            key={value}
-                            onClick={() => onRangeChange(value)}
-                            className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
-                                activeRange === value
-                                    ? 'bg-foreground text-background'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                        >
-                            {label}
-                        </button>
-                    ))}
+                <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 gap-1.5 text-[11px]"
+                            >
+                                <Filter className="h-3 w-3" />
+                                <span className="truncate">Range: {activeLabel}</span>
+                                <ChevronDown className="h-3 w-3" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-48">
+                            {CHART_RANGES.map(({ value, label }) => (
+                                <DropdownMenuItem
+                                    key={value}
+                                    onClick={() => {
+                                        onRangeChange(value);
+                                        if (value === 'custom' && onCustomRangeChange) {
+                                            setCustomOpen(true);
+                                        }
+                                    }}
+                                    className="gap-2 text-[13px]"
+                                >
+                                    {label}
+                                    {activeRange === value && <Check className="ml-auto h-3.5 w-3.5" />}
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    {activeRange === 'custom' && onCustomRangeChange && (
+                        <Popover open={customOpen} onOpenChange={setCustomOpen}>
+                            <PopoverTrigger asChild>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 text-[11px]"
+                                >
+                                    {formatRangeLabel(customRange)}
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent align="start" className="w-auto p-0">
+                                <Calendar
+                                    mode="range"
+                                    numberOfMonths={2}
+                                    selected={customRange}
+                                    onSelect={(range) => {
+                                        onCustomRangeChange(range);
+                                        onRangeChange('custom');
+                                    }}
+                                />
+                            </PopoverContent>
+                        </Popover>
+                    )}
                 </div>
 
                 {/* Series toggles */}
-                <div className="flex items-center gap-1.5">
+                <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto">
                     {metrics.map(({ key, color, label }) => {
                         const active = visibleSeries.has(key);
                         return (

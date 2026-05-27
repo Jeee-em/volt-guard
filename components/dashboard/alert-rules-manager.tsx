@@ -25,6 +25,17 @@ import {
     DropdownMenuTrigger,
     DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,11 +59,14 @@ export type RuleFormDraft = Omit<AlertRule, 'id' | 'createdAt' | 'updatedAt'>;
 
 export interface AlertRulesManagerProps {
     rules: AlertRule[];
-    onAdd:    (draft: RuleFormDraft) => void;
-    onEdit:   (id: string, draft: RuleFormDraft) => void;
-    onDelete: (id: string) => void;
-    onDuplicate: (id: string) => void;
-    onToggle: (id: string, enabled: boolean) => void;
+    loading?: boolean;
+    saving?: boolean;
+    error?: string | null;
+    onAdd:    (draft: RuleFormDraft) => void | Promise<void>;
+    onEdit:   (id: string, draft: RuleFormDraft) => void | Promise<void>;
+    onDelete: (id: string) => void | Promise<void>;
+    onDuplicate: (id: string) => void | Promise<void>;
+    onToggle: (id: string, enabled: boolean) => void | Promise<void>;
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -423,12 +437,32 @@ function RuleRow({
                         <Copy className="h-3.5 w-3.5" /> Duplicate
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                        onClick={onDelete}
-                        className="gap-2 text-[13px] text-destructive focus:text-destructive"
-                    >
-                        <Trash2 className="h-3.5 w-3.5" /> Delete
-                    </DropdownMenuItem>
+                    <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                            <DropdownMenuItem
+                                className="gap-2 text-[13px] text-destructive focus:text-destructive"
+                            >
+                                <Trash2 className="h-3.5 w-3.5" /> Delete
+                            </DropdownMenuItem>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                            <AlertDialogHeader>
+                                <AlertDialogTitle>Delete alert rule?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                    This will permanently remove "{rule.name}" and stop future notifications from it.
+                                </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                    onClick={onDelete}
+                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                >
+                                    Delete rule
+                                </AlertDialogAction>
+                            </AlertDialogFooter>
+                        </AlertDialogContent>
+                    </AlertDialog>
                 </DropdownMenuContent>
             </DropdownMenu>
         </li>
@@ -439,6 +473,9 @@ function RuleRow({
 
 export function AlertRulesManager({
     rules,
+    loading = false,
+    saving = false,
+    error = null,
     onAdd,
     onEdit,
     onDelete,
@@ -449,14 +486,15 @@ export function AlertRulesManager({
     const [editingId, setEditingId]       = useState<string | null>(null);
     const [filterSeverity, setFilterSeverity] = useState<RuleSeverity | 'all'>('all');
     const [filterEnabled, setFilterEnabled]   = useState<'all' | 'enabled' | 'disabled'>('all');
+    const isBusy = loading || saving;
 
-    const handleAdd = useCallback((draft: RuleFormDraft) => {
-        onAdd(draft);
+    const handleAdd = useCallback(async (draft: RuleFormDraft) => {
+        await onAdd(draft);
         setShowAddForm(false);
     }, [onAdd]);
 
-    const handleEdit = useCallback((id: string, draft: RuleFormDraft) => {
-        onEdit(id, draft);
+    const handleEdit = useCallback(async (id: string, draft: RuleFormDraft) => {
+        await onEdit(id, draft);
         setEditingId(null);
     }, [onEdit]);
 
@@ -474,7 +512,7 @@ export function AlertRulesManager({
         <section className="space-y-3">
             {/* Section header */}
             <div className="flex items-center gap-3">
-                <h2 className="font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
+                <h2 className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                     Alert Rules
                 </h2>
                 <div className="h-px flex-1 bg-border" />
@@ -489,40 +527,58 @@ export function AlertRulesManager({
                 {/* Toolbar */}
                 <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
                     {/* Severity filter */}
-                    <div className="flex items-center gap-1">
-                        {(['all', 'critical', 'warning', 'info'] as const).map((s) => (
-                            <button
-                                key={s}
-                                onClick={() => setFilterSeverity(s)}
-                                className={`rounded px-2.5 py-1 text-[11px] font-medium capitalize transition-colors ${
-                                    filterSeverity === s
-                                        ? 'bg-foreground text-background'
-                                        : 'text-muted-foreground hover:text-foreground'
-                                }`}
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="gap-1.5 text-[12px]"
+                                disabled={isBusy}
                             >
-                                {s}
-                            </button>
-                        ))}
-                    </div>
-
-                    <div className="h-4 w-px bg-border" />
+                                Severity: <span className="capitalize">{filterSeverity}</span>
+                                <ChevronDown className="h-3 w-3" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-44">
+                            {(['all', 'critical', 'warning', 'info'] as const).map((s) => (
+                                <DropdownMenuItem
+                                    key={s}
+                                    onClick={() => setFilterSeverity(s)}
+                                    className="gap-2 text-[13px] capitalize"
+                                >
+                                    {s}
+                                    {filterSeverity === s && <Check className="ml-auto h-3.5 w-3.5" />}
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
 
                     {/* Enabled filter */}
-                    <div className="flex items-center gap-1">
-                        {(['all', 'enabled', 'disabled'] as const).map((s) => (
-                            <button
-                                key={s}
-                                onClick={() => setFilterEnabled(s)}
-                                className={`rounded px-2.5 py-1 text-[11px] font-medium capitalize transition-colors ${
-                                    filterEnabled === s
-                                        ? 'bg-foreground text-background'
-                                        : 'text-muted-foreground hover:text-foreground'
-                                }`}
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="gap-1.5 text-[12px]"
+                                disabled={isBusy}
                             >
-                                {s}
-                            </button>
-                        ))}
-                    </div>
+                                Status: <span className="capitalize">{filterEnabled}</span>
+                                <ChevronDown className="h-3 w-3" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-44">
+                            {(['all', 'enabled', 'disabled'] as const).map((s) => (
+                                <DropdownMenuItem
+                                    key={s}
+                                    onClick={() => setFilterEnabled(s)}
+                                    className="gap-2 text-[13px] capitalize"
+                                >
+                                    {s}
+                                    {filterEnabled === s && <Check className="ml-auto h-3.5 w-3.5" />}
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
 
                     <div className="flex-1" />
 
@@ -531,7 +587,7 @@ export function AlertRulesManager({
                         size="sm"
                         onClick={() => { setShowAddForm(true); setEditingId(null); }}
                         className="gap-1.5 text-[12px]"
-                        disabled={showAddForm}
+                        disabled={showAddForm || isBusy}
                     >
                         <Plus className="h-3.5 w-3.5" />
                         Add rule
@@ -570,7 +626,16 @@ export function AlertRulesManager({
                 </div>
 
                 {/* Rules list */}
-                {filtered.length === 0 ? (
+                {loading ? (
+                    <div className="flex items-center justify-center gap-2 py-12 text-[13px] text-muted-foreground">
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-foreground" />
+                        Loading rules...
+                    </div>
+                ) : error ? (
+                    <div className="flex items-center justify-center py-12 text-[13px] text-destructive">
+                        {error}
+                    </div>
+                ) : filtered.length === 0 ? (
                     <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
                         <p className="text-[13px] text-muted-foreground">
                             {rules.length === 0

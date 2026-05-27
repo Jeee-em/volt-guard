@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import {
     AlertCircle,
     AlertTriangle,
     Info,
     CheckCircle2,
+    Trash2,
     ChevronDown,
     ChevronRight,
     Search,
@@ -30,6 +31,16 @@ import {
     DropdownMenuSeparator,
     DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,6 +64,8 @@ export interface NotificationItem {
     threshold: number;
     /** Name of the rule that triggered this */
     ruleName: string;
+    /** Optional rule id for dedupe/persistence */
+    ruleId?: string;
     /** ISO timestamp */
     receivedAt: string;
     /** Deep-link to analytics page at this timestamp */
@@ -71,9 +84,13 @@ interface DayGroup {
 
 export interface NotificationFeedProps {
     notifications: NotificationItem[];
-    onMarkRead:    (id: string)    => void;
-    onMarkAllRead: ()              => void;
-    onDismiss:     (id: string)    => void;
+    onMarkRead:    (id: string)    => void | Promise<void>;
+    onMarkAllRead: ()              => void | Promise<void>;
+    onDismiss:     (id: string)    => void | Promise<void>;
+    loading?: boolean;
+    loadingMore?: boolean;
+    hasMore?: boolean;
+    onLoadMore?: () => void | Promise<void>;
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -178,10 +195,10 @@ interface DetailPanelProps {
     item:     NotificationItem;
     onClose:  () => void;
     onMarkRead: () => void;
-    onDismiss:  () => void;
+    onRequestDelete:  () => void;
 }
 
-function DetailPanel({ item, onClose, onMarkRead, onDismiss }: DetailPanelProps) {
+function DetailPanel({ item, onClose, onMarkRead, onRequestDelete }: DetailPanelProps) {
     const cfg        = SEVERITY_CFG[item.severity];
     const SevIcon    = cfg.icon;
     const MetricIcon = METRIC_CFG[item.metric].icon;
@@ -246,11 +263,11 @@ function DetailPanel({ item, onClose, onMarkRead, onDismiss }: DetailPanelProps)
                     </button>
                 )}
                 <button
-                    onClick={onDismiss}
+                    onClick={onRequestDelete}
                     className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[12px] text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
                 >
-                    <X className="h-3.5 w-3.5" />
-                    Dismiss
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
                 </button>
                 <span className="ml-auto font-mono text-[11px] text-muted-foreground">
                     {formatTime(item.receivedAt)} · {timeAgo(item.receivedAt)}
@@ -268,7 +285,7 @@ interface NotificationRowProps {
     onExpand:    () => void;
     onCollapse:  () => void;
     onMarkRead:  () => void;
-    onDismiss:   () => void;
+    onRequestDelete:   () => void;
 }
 
 function NotificationRow({
@@ -277,7 +294,7 @@ function NotificationRow({
     onExpand,
     onCollapse,
     onMarkRead,
-    onDismiss,
+    onRequestDelete,
 }: NotificationRowProps) {
     const cfg     = SEVERITY_CFG[item.severity];
     const SevIcon = cfg.icon;
@@ -294,10 +311,11 @@ function NotificationRow({
 
     return (
         <li className={`border-l-2 ${cfg.rowClass} ${!isUnread ? 'opacity-60' : ''}`}>
-            <button
-                onClick={handleClick}
-                className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/20"
-            >
+            <div className="flex items-start">
+                <button
+                    onClick={handleClick}
+                    className="flex w-full flex-1 items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/20"
+                >
                 {/* Unread dot */}
                 <span className="mt-1.5 flex h-4 w-4 shrink-0 items-center justify-center">
                     {isUnread ? (
@@ -334,7 +352,20 @@ function NotificationRow({
                         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
                     )}
                 </div>
-            </button>
+                </button>
+
+                <button
+                    type="button"
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onRequestDelete();
+                    }}
+                    className="mt-2.5 mr-3 flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label="Delete notification"
+                >
+                    <Trash2 className="h-3.5 w-3.5" />
+                </button>
+            </div>
 
             {/* Inline detail */}
             {isExpanded && (
@@ -342,7 +373,7 @@ function NotificationRow({
                     item={item}
                     onClose={onCollapse}
                     onMarkRead={onMarkRead}
-                    onDismiss={onDismiss}
+                    onRequestDelete={onRequestDelete}
                 />
             )}
         </li>
@@ -357,7 +388,7 @@ interface DayGroupSectionProps {
     onExpand:   (id: string) => void;
     onCollapse: ()           => void;
     onMarkRead: (id: string) => void;
-    onDismiss:  (id: string) => void;
+    onRequestDelete:  (item: NotificationItem) => void;
 }
 
 function DayGroupSection({
@@ -366,7 +397,7 @@ function DayGroupSection({
     onExpand,
     onCollapse,
     onMarkRead,
-    onDismiss,
+    onRequestDelete,
 }: DayGroupSectionProps) {
     const unreadCount = group.items.filter((i) => i.status === 'unread').length;
 
@@ -394,7 +425,7 @@ function DayGroupSection({
                         onExpand={() => onExpand(item.id)}
                         onCollapse={onCollapse}
                         onMarkRead={() => onMarkRead(item.id)}
-                        onDismiss={() => onDismiss(item.id)}
+                        onRequestDelete={() => onRequestDelete(item)}
                     />
                 ))}
             </ul>
@@ -409,12 +440,18 @@ export function NotificationFeed({
     onMarkRead,
     onMarkAllRead,
     onDismiss,
+    loading = false,
+    loadingMore = false,
+    hasMore = false,
+    onLoadMore,
 }: NotificationFeedProps) {
     const [expandedId,      setExpandedId]      = useState<string | null>(null);
     const [search,          setSearch]           = useState<string>('');
     const [filterSeverity,  setFilterSeverity]   = useState<FilterSeverity>('all');
     const [filterStatus,    setFilterStatus]     = useState<FilterStatus>('all');
     const [filterMetric,    setFilterMetric]     = useState<FilterMetric>('all');
+    const [deleteTarget, setDeleteTarget] = useState<NotificationItem | null>(null);
+    const [deleteOpen, setDeleteOpen] = useState(false);
 
     const unreadCount = notifications.filter((n) => n.status === 'unread').length;
     const hasFilters  = filterSeverity !== 'all' || filterStatus !== 'all' || filterMetric !== 'all' || search !== '';
@@ -425,6 +462,23 @@ export function NotificationFeed({
         setFilterMetric('all');
         setSearch('');
     }, []);
+
+    const handleRequestDelete = useCallback((item: NotificationItem) => {
+        setDeleteTarget(item);
+        setDeleteOpen(true);
+    }, []);
+
+    const handleDeleteOpenChange = useCallback((open: boolean) => {
+        setDeleteOpen(open);
+        if (!open) setDeleteTarget(null);
+    }, []);
+
+    const handleConfirmDelete = useCallback(async () => {
+        if (!deleteTarget) return;
+        await onDismiss(deleteTarget.id);
+        setDeleteOpen(false);
+        setDeleteTarget(null);
+    }, [deleteTarget, onDismiss]);
 
     // Filter
     const filtered = useMemo<NotificationItem[]>(() => {
@@ -452,7 +506,7 @@ export function NotificationFeed({
         <section className="space-y-3">
             {/* Section header */}
             <div className="flex items-center gap-3">
-                <h2 className="font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
+                <h2 className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                     Notification Feed
                 </h2>
                 <div className="h-px flex-1 bg-border" />
@@ -470,7 +524,7 @@ export function NotificationFeed({
                 {/* ── Toolbar ── */}
                 <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
                     {/* Search */}
-                    <div className="relative min-w-[180px] flex-1">
+                    <div className="relative min-w-45 flex-1">
                         <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                         <Input
                             value={search}
@@ -576,7 +630,12 @@ export function NotificationFeed({
                 </div>
 
                 {/* ── Feed ── */}
-                {groups.length === 0 ? (
+                {loading && notifications.length === 0 ? (
+                    <div className="flex items-center justify-center gap-2 py-16 text-[13px] text-muted-foreground">
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-foreground" />
+                        Loading notifications...
+                    </div>
+                ) : groups.length === 0 ? (
                     <div className="flex flex-col items-center justify-center gap-3 py-16">
                         {hasFilters ? (
                             <>
@@ -603,7 +662,7 @@ export function NotificationFeed({
                                 onExpand={(id) => setExpandedId(id)}
                                 onCollapse={() => setExpandedId(null)}
                                 onMarkRead={onMarkRead}
-                                onDismiss={onDismiss}
+                                onRequestDelete={handleRequestDelete}
                             />
                         ))}
                     </div>
@@ -611,11 +670,44 @@ export function NotificationFeed({
 
                 {/* ── Footer count ── */}
                 {groups.length > 0 && (
-                    <div className="border-t border-border px-4 py-2.5 text-center text-[11px] text-muted-foreground">
+                    <div className="border-t border-border px-4 py-3 text-center text-[11px] text-muted-foreground">
+                        {hasMore && onLoadMore && (
+                            <div className="mb-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={onLoadMore}
+                                    disabled={loadingMore}
+                                    className="h-8 text-[12px]"
+                                >
+                                    {loadingMore ? 'Loading...' : 'Load more'}
+                                </Button>
+                            </div>
+                        )}
                         Showing {filtered.length} of {notifications.length} notifications
                     </div>
                 )}
             </div>
+
+            <AlertDialog open={deleteOpen} onOpenChange={handleDeleteOpenChange}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete notification?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This will permanently remove "{deleteTarget?.title}" from the feed.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={handleConfirmDelete}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        >
+                            Delete
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </section>
     );
 }

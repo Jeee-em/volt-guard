@@ -112,8 +112,9 @@ const CHANNEL_CFG = {
     alwaysOn: boolean;
 }>;
 
+const SMS_ENABLED = false;
 const SEVERITIES:  NotificationSeverity[] = ['critical', 'warning', 'info'];
-const CHANNELS:    NotificationChannel[]  = ['in_app', 'email', 'sms'];
+const CHANNELS:    NotificationChannel[]  = SMS_ENABLED ? ['in_app', 'email', 'sms'] : ['in_app', 'email'];
 
 const DAYS_OF_WEEK = [
     { value: 0, short: 'Su' },
@@ -233,7 +234,7 @@ function MatrixSection({ matrix, onChange }: MatrixSectionProps) {
     return (
         <Section icon={Bell} title="Channel preferences">
             <div className="overflow-x-auto">
-                <table className="w-full min-w-[420px]">
+                <table className="w-full min-w-105">
                     <thead>
                         <tr>
                             <th className="w-1/3 pb-3 text-left" />
@@ -340,33 +341,43 @@ function ContactSection({ contact, errors, onChange }: ContactSectionProps) {
                     )}
                 </div>
 
-                {/* Phone */}
-                <div className="space-y-1.5">
-                    <label
-                        htmlFor={`${uid}-phone`}
-                        className="block text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
-                    >
-                        Phone number (SMS)
-                    </label>
-                    <div className="relative">
-                        <MessageSquare className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                            id={`${uid}-phone`}
-                            type="tel"
-                            value={contact.phone}
-                            onChange={(e) => onChange('phone', e.target.value)}
-                            placeholder="+1 555 000 0000"
-                            className="h-9 pl-8 font-mono text-[13px]"
-                        />
+                {/* Phone (SMS disabled) */}
+                {SMS_ENABLED ? (
+                    <div className="space-y-1.5">
+                        <label
+                            htmlFor={`${uid}-phone`}
+                            className="block text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
+                        >
+                            Phone number (SMS)
+                        </label>
+                        <div className="relative">
+                            <MessageSquare className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                            <Input
+                                id={`${uid}-phone`}
+                                type="tel"
+                                value={contact.phone}
+                                onChange={(e) => onChange('phone', e.target.value)}
+                                placeholder="+1 555 000 0000"
+                                className="h-9 pl-8 font-mono text-[13px]"
+                            />
+                        </div>
+                        {errors.phone ? (
+                            <p className="text-[11px] text-destructive">{errors.phone}</p>
+                        ) : (
+                            <p className="text-[10px] text-muted-foreground">
+                                Include country code, e.g. +63 for Philippines
+                            </p>
+                        )}
                     </div>
-                    {errors.phone ? (
-                        <p className="text-[11px] text-destructive">{errors.phone}</p>
-                    ) : (
-                        <p className="text-[10px] text-muted-foreground">
-                            Include country code, e.g. +63 for Philippines
-                        </p>
-                    )}
-                </div>
+                ) : (
+                    <div className="space-y-1.5">
+                        <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+                            <p className="text-[11px] text-muted-foreground">
+                                SMS notifications are temporarily disabled.
+                            </p>
+                        </div>
+                    </div>
+                )}
             </div>
         </Section>
     );
@@ -403,7 +414,7 @@ function QuietHoursSection({ quietHours, onChange }: QuietHoursSectionProps) {
                             Suppress non-critical alerts
                         </p>
                         <p className="text-[11px] text-muted-foreground">
-                            During quiet hours, only critical alerts will send SMS and email.
+                            During quiet hours, only critical alerts will send email.
                         </p>
                     </div>
                     <ToggleSwitch
@@ -585,7 +596,7 @@ export function NotificationPreferencesPanel({
         <section className="space-y-3">
             {/* Section header */}
             <div className="flex items-center gap-3">
-                <h2 className="font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
+                <h2 className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                     Notification Preferences
                 </h2>
                 <div className="h-px flex-1 bg-border" />

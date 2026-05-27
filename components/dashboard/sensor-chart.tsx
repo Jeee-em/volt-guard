@@ -1,7 +1,18 @@
 'use client';
 
 import { useRef, useState, useCallback } from 'react';
+import type { DateRange } from 'react-day-picker';
 import { Card } from '@/components/ui/card';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
+import { Button } from '@/components/ui/button';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ChartRange, CHART_RANGES, filterByRange } from '@/components/dashboard/sensor-chart-shared';
 import {
     LineChart,
     Line,
@@ -12,7 +23,7 @@ import {
     Legend,
     ResponsiveContainer,
 } from 'recharts';
-import { Download, ImageDown, Filter } from 'lucide-react';
+import { Download, ImageDown, Filter, ChevronDown, Check } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,34 +50,14 @@ interface SensorChartProps {
     metrics: MetricConfig[];
 }
 
-// ─── Time range filter options ────────────────────────────────────────────────
-
-const TIME_RANGES = [
-    { label: '1 min', seconds: 60 },
-    { label: '5 min', seconds: 300 },
-    { label: '15 min', seconds: 900 },
-    { label: '1 hr', seconds: 3600 },
-    { label: 'All', seconds: Infinity },
-] as const;
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function filterByRange(data: ChartDataPoint[], seconds: number): ChartDataPoint[] {
-    if (seconds === Infinity || data.length === 0) return data;
-    const hasTimestamps = data.some(
-        (point) => typeof point.timestamp === 'number' && Number.isFinite(point.timestamp)
-    );
-
-    if (hasTimestamps) {
-        const cutoff = Date.now() - seconds * 1000;
-        return data.filter((point) =>
-            typeof point.timestamp === 'number' &&
-            Number.isFinite(point.timestamp) &&
-            point.timestamp >= cutoff
-        );
-    }
-
-    return data.slice(-Math.min(data.length, Math.ceil(seconds)));
+function formatRangeLabel(range?: DateRange): string {
+    if (!range?.from) return 'Custom';
+    const fromLabel = range.from.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    if (!range.to) return `${fromLabel} - ...`;
+    const toLabel = range.to.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return `${fromLabel} - ${toLabel}`;
 }
 
 function downloadCSV(data: ChartDataPoint[], filename = 'sensor-data.csv') {
@@ -115,9 +106,15 @@ export function SensorChart({ title, data, loading, error, metrics }: SensorChar
     const [visibleSeries, setVisibleSeries] = useState<Set<string>>(
         new Set(metrics.map((m) => m.key as string))
     );
-    const [activeRange, setActiveRange] = useState<number>(Infinity);
+    const [activeRange, setActiveRange] = useState<ChartRange>('realtime');
+    const [customRange, setCustomRange] = useState<DateRange | undefined>(undefined);
+    const [customOpen, setCustomOpen] = useState(false);
 
-    const filteredData = filterByRange(data, activeRange);
+    const filteredData = filterByRange(data, activeRange, customRange);
+    const activeLabel =
+        activeRange === 'custom'
+            ? formatRangeLabel(customRange)
+            : CHART_RANGES.find((range) => range.value === activeRange)?.label ?? 'Range';
 
     const toggleSeries = useCallback((key: string) => {
         setVisibleSeries((prev) => {
@@ -178,24 +175,54 @@ export function SensorChart({ title, data, loading, error, metrics }: SensorChar
             </div>
 
             {/* ── Controls bar ── */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/30 px-5 py-2.5">
+            <div className="flex flex-col gap-2 border-b border-border bg-muted/30 px-5 py-2.5 sm:flex-row sm:items-center sm:justify-between">
                 {/* Time filter */}
-                <div className="flex items-center gap-1.5">
-                    <Filter className="h-3 w-3 text-muted-foreground" />
-                    <span className="mr-1 text-[11px] text-muted-foreground">Range</span>
-                    {TIME_RANGES.map(({ label, seconds }) => (
-                        <button
-                            key={label}
-                            onClick={() => setActiveRange(seconds)}
-                            className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
-                                activeRange === seconds
-                                    ? 'bg-foreground text-background'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                        >
-                            {label}
-                        </button>
-                    ))}
+                <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]">
+                                <Filter className="h-3 w-3" />
+                                <span className="truncate">Range: {activeLabel}</span>
+                                <ChevronDown className="h-3 w-3" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-48">
+                            {CHART_RANGES.map(({ value, label }) => (
+                                <DropdownMenuItem
+                                    key={value}
+                                    onClick={() => {
+                                        setActiveRange(value);
+                                        if (value === 'custom') setCustomOpen(true);
+                                    }}
+                                    className="gap-2 text-[13px]"
+                                >
+                                    {label}
+                                    {activeRange === value && <Check className="ml-auto h-3.5 w-3.5" />}
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    {activeRange === 'custom' && (
+                        <Popover open={customOpen} onOpenChange={setCustomOpen}>
+                            <PopoverTrigger asChild>
+                                <Button variant="outline" size="sm" className="h-7 text-[11px]">
+                                    {formatRangeLabel(customRange)}
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent align="start" className="w-auto p-0">
+                                <Calendar
+                                    mode="range"
+                                    numberOfMonths={2}
+                                    selected={customRange}
+                                    onSelect={(range) => {
+                                        setCustomRange(range);
+                                        setActiveRange('custom');
+                                    }}
+                                />
+                            </PopoverContent>
+                        </Popover>
+                    )}
                 </div>
 
                 {/* Series toggles */}

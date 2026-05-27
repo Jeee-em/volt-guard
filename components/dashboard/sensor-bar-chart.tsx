@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState, useCallback } from 'react';
+import type { DateRange } from 'react-day-picker';
 import {
     BarChart,
     Bar,
@@ -8,7 +9,6 @@ import {
     YAxis,
     CartesianGrid,
     Tooltip,
-    Cell,
     ResponsiveContainer,
 } from 'recharts';
 import {
@@ -26,7 +26,6 @@ import {
 } from '@/components/dashboard/sensor-chart-shared';
 
 // ─── Thin down to N evenly-spaced bars so it stays readable ──────────────────
-
 function sampleData(data: any[], maxBars = 60) {
     if (data.length <= maxBars) return data;
     const step = Math.ceil(data.length / maxBars);
@@ -43,12 +42,13 @@ export function SensorBarChart({
     height = 320,
 }: BaseChartProps) {
     const chartRef = useRef<HTMLDivElement>(null);
-    const [activeRange, setActiveRange] = useState<ChartRange>('all');
+    const [activeRange, setActiveRange] = useState<ChartRange>('realtime');
+    const [customRange, setCustomRange] = useState<DateRange | undefined>(undefined);
     const [visibleSeries, setVisibleSeries] = useState<Set<string>>(
         new Set(metrics.map((m) => m.key))
     );
 
-    const filtered = sampleData(filterByRange(data, activeRange));
+    const filtered = sampleData(filterByRange(data, activeRange, customRange));
 
     const toggleSeries = useCallback((key: string) => {
         setVisibleSeries((prev) => {
@@ -78,6 +78,8 @@ export function SensorBarChart({
             dataLength={filtered.length}
             activeRange={activeRange}
             onRangeChange={setActiveRange}
+            customRange={customRange}
+            onCustomRangeChange={setCustomRange}
             metrics={metrics}
             visibleSeries={visibleSeries}
             onToggleSeries={toggleSeries}
@@ -115,7 +117,10 @@ export function SensorBarChart({
                             tickLine={false}
                             width={42}
                         />
-                        <Tooltip content={<ChartTooltip />} cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }} />
+                        <Tooltip
+                            content={<ChartTooltip />}
+                            cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }}
+                        />
                         {visibleMetrics.map(({ key, color, label }) => (
                             <Bar
                                 key={key}
