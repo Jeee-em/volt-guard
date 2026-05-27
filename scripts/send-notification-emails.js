@@ -55,6 +55,11 @@ const transport = createNotificationEmailTransport();
 
 const EMAIL_FROM = process.env.SMTP_FROM || process.env.SMTP_USER;
 const MAX_AGE_DAYS = Number(process.env.EMAIL_MAX_AGE_DAYS || 7);
+const NOTIFICATION_PATHS = (uid) => [
+    `user_notifications/${uid}`,
+    `notifications/${uid}`,
+];
+
 function parseTimeToMinutes(value) {
     const [h, m] = value.split(':').map((part) => Number(part));
     if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
@@ -82,6 +87,42 @@ async function sendNotificationEmail(to, item) {
     });
 }
 
+async function loadNotificationsForUser(uid) {
+    const snapshots = await Promise.all(
+        NOTIFICATION_PATHS(uid).map(async (path) => {
+            const snapshot = await db.ref(path).get();
+            return { path, data: snapshot.val() || {} };
+        }),
+    );
+
+    const merged = new Map();
+    for (const { path, data } of snapshots) {
+        for (const [id, item] of Object.entries(data)) {
+            if (!merged.has(id)) {
+                merged.set(id, { item, path });
+            }
+        }
+    }
+
+    return merged;
+}
+
+async function claimNotificationDelivery(path, nowIso) {
+    const deliveryRef = db.ref(`${path}/delivery`);
+    const result = await deliveryRef.transaction((current) => {
+        if (current?.emailSent || current?.emailProcessingAt) {
+            return current;
+        }
+
+        return {
+            ...(current && typeof current === 'object' ? current : {}),
+            emailProcessingAt: nowIso,
+        };
+    });
+
+    return Boolean(result.committed && result.snapshot.val()?.emailProcessingAt === nowIso);
+}
+
 async function main() {
     await transport.verify();
 
@@ -98,14 +139,14 @@ async function main() {
 
         const quietActive = isWithinQuietHours(prefs?.quietHours, now);
 
-        const notifSnapshot = await db.ref(`user_notifications/${uid}`).get();
-        const notifications = notifSnapshot.val() || {};
+        const notifications = await loadNotificationsForUser(uid);
 
-        for (const [id, item] of Object.entries(notifications)) {
+        for (const [id, entry] of notifications.entries()) {
+            const { item, path } = entry;
             const receivedAtMs = Number(item?.receivedAtMs || Date.parse(item?.receivedAt || ''));
             if (!Number.isFinite(receivedAtMs)) continue;
             if (receivedAtMs < cutoff) {
-                await db.ref(`user_notifications/${uid}/${id}/delivery`).update({
+                await db.ref(`${path}/${id}/delivery`).update({
                     emailSkipped: true,
                     emailSkipReason: 'stale',
                     emailSkippedAt: new Date().toISOString(),
@@ -114,7 +155,7 @@ async function main() {
             }
 
             if (item?.status !== 'unread') continue;
-            if (item?.delivery && item.delivery.emailSent) continue;
+            if (item?.delivery && (item.delivery.emailSent || item.delivery.emailProcessingAt)) continue;
 
             const severity = item?.severity;
             const emailEnabled = prefs?.matrix?.[severity]?.email === true;
@@ -122,12 +163,27 @@ async function main() {
 
             if (quietActive && severity !== 'critical') continue;
 
-            await sendNotificationEmail(email, item);
-            await db.ref(`user_notifications/${uid}/${id}/delivery`).update({
-                emailSent: true,
-                emailSentAt: new Date().toISOString(),
-                emailProvider: 'gmail',
-            });
+            const claimed = await claimNotificationDelivery(`${path}/${id}`, now.toISOString());
+            if (!claimed) continue;
+
+            try {
+                await sendNotificationEmail(email, item);
+                await db.ref(`${path}/${id}/delivery`).update({
+                    emailSent: true,
+                    emailSentAt: new Date().toISOString(),
+                    emailProvider: 'gmail',
+                    emailTrigger: 'scheduled',
+                    emailSentTo: email,
+                    emailProcessingAt: null,
+                });
+            } catch (error) {
+                await db.ref(`${path}/${id}/delivery`).update({
+                    emailProcessingAt: null,
+                    emailSendError: error instanceof Error ? error.message : 'Unknown error',
+                    emailSendFailedAt: new Date().toISOString(),
+                });
+                throw error;
+            }
         }
     }
 }

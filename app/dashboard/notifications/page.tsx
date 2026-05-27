@@ -124,6 +124,8 @@ export default function NotificationsPage() {
     muted: false,
     until: null,
   });
+  const [preferences, setPreferences] = useState<NotificationPreferences | null>(null);
+  const [preferencesLoading, setPreferencesLoading] = useState(true);
 
   const {
     notifications,
@@ -140,21 +142,97 @@ export default function NotificationsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
 
-  const initialPreferences = useMemo(
-    () => buildDefaultPrefs(user?.email ?? ''),
-    [user?.email],
-  );
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPreferences() {
+      if (!user?.uid) {
+        setPreferences(buildDefaultPrefs(user?.email ?? ''));
+        setPreferencesLoading(false);
+        return;
+      }
+
+      setPreferencesLoading(true);
+
+      try {
+        const response = await fetch('/api/preferences', {
+          method: 'GET',
+          credentials: 'same-origin',
+        });
+
+        const raw = await response.text();
+        let payload: { ok?: boolean; prefs?: NotificationPreferences; error?: string } | null = null;
+
+        try {
+          payload = raw ? JSON.parse(raw) : null;
+        } catch {
+          payload = null;
+        }
+
+        if (!response.ok) {
+          throw new Error(payload?.error || raw || 'Failed to load preferences.');
+        }
+
+        if (!cancelled) {
+          setPreferences(payload?.prefs ?? buildDefaultPrefs(user?.email ?? ''));
+        }
+      } catch {
+        if (!cancelled) {
+          setPreferences(buildDefaultPrefs(user?.email ?? ''));
+        }
+      } finally {
+        if (!cancelled) {
+          setPreferencesLoading(false);
+        }
+      }
+    }
+
+    void loadPreferences();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid, user?.email]);
 
   const handleSave = useCallback(async (prefs: NotificationPreferences) => {
     setIsSaving(true);
-    await fetch('/api/preferences', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify(prefs),
-    });
-    setIsSaving(false);
-  }, []);
+    try {
+      const response = await fetch('/api/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(prefs),
+      });
+
+      const raw = await response.text();
+      let payload: { ok?: boolean; error?: string } | null = null;
+
+      try {
+        payload = raw ? JSON.parse(raw) : null;
+      } catch {
+        payload = null;
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.error || raw || 'Failed to save preferences.');
+      }
+
+      setPreferences(prefs);
+      toast({
+        title: 'Preferences saved',
+        description: 'Notification settings were updated successfully.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Failed to save preferences',
+        description: getErrorMessage(error),
+        variant: 'destructive',
+      });
+      throw error;
+    } finally {
+      setIsSaving(false);
+    }
+  }, [toast]);
 
   const handleSendEmail = useCallback(async (id: string) => {
     if (!user?.email) {
@@ -462,17 +540,23 @@ export default function NotificationsPage() {
         onLoadMore={loadMore}
       />
 
-      <NotificationPreferencesPanel
-        initial={initialPreferences}
-        recipientEmail={user?.email ?? ''}
-        latestNotificationId={latestNotification?.id}
-        latestNotificationTitle={latestNotification?.title}
-        canSendLatest={Boolean(latestNotification)}
-        onSendLatestEmail={latestNotification ? () => handleSendEmail(latestNotification.id) : undefined}
-        isSendingEmail={sendingEmailId === latestNotification?.id}
-        onSave={handleSave}
-        isSaving={isSaving}
-      />
+      {preferencesLoading || !preferences ? (
+        <div className="rounded-xl border border-border bg-background px-4 py-6 text-sm text-muted-foreground">
+          Loading notification preferences...
+        </div>
+      ) : (
+        <NotificationPreferencesPanel
+          initial={preferences}
+          recipientEmail={user?.email ?? ''}
+          latestNotificationId={latestNotification?.id}
+          latestNotificationTitle={latestNotification?.title}
+          canSendLatest={Boolean(latestNotification)}
+          onSendLatestEmail={latestNotification ? () => handleSendEmail(latestNotification.id) : undefined}
+          isSendingEmail={sendingEmailId === latestNotification?.id}
+          onSave={handleSave}
+          isSaving={isSaving}
+        />
+      )}
 
       {/* <NotificationStatsStrip notifications={statsItems} windowDays={7} /> */}
     </div>

@@ -33,7 +33,7 @@ import {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type NotificationSeverity = 'critical' | 'warning' | 'info';
-export type NotificationChannel  = 'in_app' | 'email' | 'sms';
+export type NotificationChannel = 'in_app' | 'email' | 'sms';
 
 export type SeverityChannelMatrix = Record<
     NotificationSeverity,
@@ -42,10 +42,10 @@ export type SeverityChannelMatrix = Record<
 
 export interface QuietHours {
     enabled: boolean;
-    from:    string;  // HH:MM, 24h
-    to:      string;  // HH:MM, 24h
+    from: string;  // HH:MM, 24h
+    to: string;  // HH:MM, 24h
     /** Days of week: 0 = Sunday … 6 = Saturday */
-    days:    number[];
+    days: number[];
 }
 
 export interface ContactDetails {
@@ -54,19 +54,19 @@ export interface ContactDetails {
 }
 
 export interface NotificationPreferences {
-    matrix:      SeverityChannelMatrix;
-    quietHours:  QuietHours;
-    contact:     ContactDetails;
+    matrix: SeverityChannelMatrix;
+    quietHours: QuietHours;
+    contact: ContactDetails;
 }
 
 export interface NotificationPreferencesPanelProps {
-    initial:  NotificationPreferences;
+    initial: NotificationPreferences;
     recipientEmail?: string;
     latestNotificationId?: string;
     latestNotificationTitle?: string;
     canSendLatest?: boolean;
     onSendLatestEmail?: () => Promise<void> | void;
-    onSave:   (prefs: NotificationPreferences) => void;
+    onSave: (prefs: NotificationPreferences) => Promise<void> | void;
     isSaving?: boolean;
     isSendingEmail?: boolean;
 }
@@ -75,63 +75,63 @@ export interface NotificationPreferencesPanelProps {
 
 const SEVERITY_CFG = {
     critical: {
-        label:     'Critical',
-        sublabel:  'Threshold breaches, immediate action needed',
-        icon:      AlertCircle,
+        label: 'Critical',
+        sublabel: 'Threshold breaches, immediate action needed',
+        icon: AlertCircle,
         iconClass: 'text-red-500',
-        pill:      'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300',
+        pill: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300',
     },
     warning: {
-        label:     'Warning',
-        sublabel:  'Values approaching unsafe limits',
-        icon:      AlertTriangle,
+        label: 'Warning',
+        sublabel: 'Values approaching unsafe limits',
+        icon: AlertTriangle,
         iconClass: 'text-amber-500',
-        pill:      'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300',
+        pill: 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300',
     },
     info: {
-        label:     'Info',
-        sublabel:  'Status updates and non-urgent events',
-        icon:      Info,
+        label: 'Info',
+        sublabel: 'Status updates and non-urgent events',
+        icon: Info,
         iconClass: 'text-blue-500',
-        pill:      'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300',
+        pill: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300',
     },
 } as const satisfies Record<NotificationSeverity, {
-    label:     string;
-    sublabel:  string;
-    icon:      React.ElementType;
+    label: string;
+    sublabel: string;
+    icon: React.ElementType;
     iconClass: string;
-    pill:      string;
+    pill: string;
 }>;
 
 const CHANNEL_CFG = {
     in_app: {
-        label:       'In-app',
-        sublabel:    'Notification feed & banner',
-        icon:        Bell,
-        alwaysOn:    true,  // in-app cannot be disabled
+        label: 'In-app',
+        sublabel: 'Notification feed & banner',
+        icon: Bell,
+        alwaysOn: true,  // in-app cannot be disabled
     },
     email: {
-        label:       'Email',
-        sublabel:    'Sent to your registered address',
-        icon:        Mail,
-        alwaysOn:    false,
+        label: 'Email',
+        sublabel: 'Sent to your registered address',
+        icon: Mail,
+        alwaysOn: false,
     },
     sms: {
-        label:       'SMS',
-        sublabel:    'Text message to your phone',
-        icon:        MessageSquare,
-        alwaysOn:    false,
+        label: 'SMS',
+        sublabel: 'Text message to your phone',
+        icon: MessageSquare,
+        alwaysOn: false,
     },
 } as const satisfies Record<NotificationChannel, {
-    label:    string;
+    label: string;
     sublabel: string;
-    icon:     React.ElementType;
+    icon: React.ElementType;
     alwaysOn: boolean;
 }>;
 
 const SMS_ENABLED = false;
-const SEVERITIES:  NotificationSeverity[] = ['critical', 'warning', 'info'];
-const CHANNELS:    NotificationChannel[]  = SMS_ENABLED ? ['in_app', 'email', 'sms'] : ['in_app', 'email'];
+const SEVERITIES: NotificationSeverity[] = ['critical', 'warning', 'info'];
+const CHANNELS: NotificationChannel[] = SMS_ENABLED ? ['in_app', 'email', 'sms'] : ['in_app', 'email'];
 
 const DAYS_OF_WEEK = [
     { value: 0, short: 'Su' },
@@ -148,13 +148,13 @@ const DAYS_OF_WEEK = [
 function buildDefaultMatrix(): SeverityChannelMatrix {
     const channels: Record<NotificationChannel, boolean> = {
         in_app: true,
-        email:  true,
-        sms:    false,
+        email: true,
+        sms: false,
     };
     return {
         critical: { ...channels },
-        warning:  { ...channels },
-        info:     { in_app: true, email: false, sms: false },
+        warning: { ...channels },
+        info: { in_app: true, email: false, sms: false },
     };
 }
 
@@ -173,21 +173,21 @@ function deepClonePrefs(prefs: NotificationPreferences): NotificationPreferences
     return {
         matrix: {
             critical: { ...prefs.matrix.critical },
-            warning:  { ...prefs.matrix.warning  },
-            info:     { ...prefs.matrix.info      },
+            warning: { ...prefs.matrix.warning },
+            info: { ...prefs.matrix.info },
         },
         quietHours: { ...prefs.quietHours, days: [...prefs.quietHours.days] },
-        contact:    { ...prefs.contact },
+        contact: { ...prefs.contact },
     };
 }
 
 // ─── Toggle switch ────────────────────────────────────────────────────────────
 
 interface ToggleSwitchProps {
-    enabled:   boolean;
+    enabled: boolean;
     disabled?: boolean;
-    onChange:  (v: boolean) => void;
-    label:     string;
+    onChange: (v: boolean) => void;
+    label: string;
 }
 
 function ToggleSwitch({ enabled, disabled = false, onChange, label }: ToggleSwitchProps) {
@@ -199,20 +199,17 @@ function ToggleSwitch({ enabled, disabled = false, onChange, label }: ToggleSwit
             aria-label={label}
             disabled={disabled}
             onClick={() => !disabled && onChange(!enabled)}
-            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                disabled
+            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${disabled
                     ? 'cursor-not-allowed opacity-40'
                     : 'cursor-pointer'
-            } ${
-                enabled
+                } ${enabled
                     ? 'bg-green-500'
                     : 'bg-muted-foreground/30'
-            }`}
+                }`}
         >
             <span
-                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
-                    enabled ? 'translate-x-4' : 'translate-x-0'
-                }`}
+                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0'
+                    }`}
             />
         </button>
     );
@@ -221,8 +218,8 @@ function ToggleSwitch({ enabled, disabled = false, onChange, label }: ToggleSwit
 // ─── Section wrapper ──────────────────────────────────────────────────────────
 
 interface SectionProps {
-    icon:     React.ElementType;
-    title:    string;
+    icon: React.ElementType;
+    title: string;
     children: React.ReactNode;
 }
 
@@ -243,7 +240,7 @@ function Section({ icon: Icon, title, children }: SectionProps) {
 // ─── Severity × Channel matrix ────────────────────────────────────────────────
 
 interface MatrixSectionProps {
-    matrix:   SeverityChannelMatrix;
+    matrix: SeverityChannelMatrix;
     onChange: (severity: NotificationSeverity, channel: NotificationChannel, value: boolean) => void;
 }
 
@@ -256,7 +253,7 @@ function MatrixSection({ matrix, onChange }: MatrixSectionProps) {
                         <tr>
                             <th className="w-1/3 pb-3 text-left" />
                             {CHANNELS.map((ch) => {
-                                const cfg   = CHANNEL_CFG[ch];
+                                const cfg = CHANNEL_CFG[ch];
                                 const ChIcon = cfg.icon;
                                 return (
                                     <th key={ch} className="pb-3 text-center">
@@ -276,7 +273,7 @@ function MatrixSection({ matrix, onChange }: MatrixSectionProps) {
                     </thead>
                     <tbody className="divide-y divide-border">
                         {SEVERITIES.map((sev) => {
-                            const cfg    = SEVERITY_CFG[sev];
+                            const cfg = SEVERITY_CFG[sev];
                             const SevIcon = cfg.icon;
                             return (
                                 <tr key={sev}>
@@ -326,8 +323,8 @@ function MatrixSection({ matrix, onChange }: MatrixSectionProps) {
 // ─── Contact details ──────────────────────────────────────────────────────────
 
 interface ContactSectionProps {
-    contact:  ContactDetails;
-    errors:   Partial<Record<keyof ContactDetails, string>>;
+    contact: ContactDetails;
+    errors: Partial<Record<keyof ContactDetails, string>>;
     recipientEmail?: string;
     onChange: (field: keyof ContactDetails, value: string) => void;
 }
@@ -368,7 +365,7 @@ function ContactSection({ contact, errors, recipientEmail, onChange }: ContactSe
                     )}
                 </div>
 
-                {/* Phone (SMS disabled) */}
+                {/* Phone (SMS disabled)
                 {SMS_ENABLED ? (
                     <div className="space-y-1.5">
                         <label
@@ -404,7 +401,7 @@ function ContactSection({ contact, errors, recipientEmail, onChange }: ContactSe
                             </p>
                         </div>
                     </div>
-                )}
+                )} */}
             </div>
         </Section>
     );
@@ -437,7 +434,7 @@ function ManualSendSection({
         setConfirmOpen(false);
     }, [onSendLatestEmail]);
 
-    const label = latestNotificationTitle ? `Send "${latestNotificationTitle}" now` : 'Send latest notification';
+    const label = "Send Email ";
 
     return (
         <Section icon={Send} title="Manual email send">
@@ -496,7 +493,7 @@ function ManualSendSection({
 
 interface QuietHoursSectionProps {
     quietHours: QuietHours;
-    onChange:   (qh: QuietHours) => void;
+    onChange: (qh: QuietHours) => void;
 }
 
 function QuietHoursSection({ quietHours, onChange }: QuietHoursSectionProps) {
@@ -535,9 +532,8 @@ function QuietHoursSection({ quietHours, onChange }: QuietHoursSectionProps) {
 
                 {/* Time range */}
                 <div
-                    className={`space-y-4 transition-opacity ${
-                        quietHours.enabled ? 'opacity-100' : 'pointer-events-none opacity-30'
-                    }`}
+                    className={`space-y-4 transition-opacity ${quietHours.enabled ? 'opacity-100' : 'pointer-events-none opacity-30'
+                        }`}
                 >
                     <div className="grid grid-cols-2 gap-4">
                         {/* From */}
@@ -594,11 +590,10 @@ function QuietHoursSection({ quietHours, onChange }: QuietHoursSectionProps) {
                                         key={value}
                                         type="button"
                                         onClick={() => toggleDay(value)}
-                                        className={`flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-medium transition-colors ${
-                                            active
+                                        className={`flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-medium transition-colors ${active
                                                 ? 'bg-foreground text-background'
                                                 : 'border border-border text-muted-foreground hover:border-foreground hover:text-foreground'
-                                        }`}
+                                            }`}
                                     >
                                         {short}
                                     </button>
@@ -609,8 +604,8 @@ function QuietHoursSection({ quietHours, onChange }: QuietHoursSectionProps) {
                             {quietHours.days.length === 0
                                 ? 'No days selected — quiet hours will never activate.'
                                 : quietHours.days.length === 7
-                                ? 'Every day'
-                                : `${quietHours.days.length} day${quietHours.days.length > 1 ? 's' : ''} selected`}
+                                    ? 'Every day'
+                                    : `${quietHours.days.length} day${quietHours.days.length > 1 ? 's' : ''} selected`}
                         </p>
                     </div>
 
@@ -683,8 +678,8 @@ export function NotificationPreferencesPanel({
 
     const handleMatrixChange = useCallback((
         severity: NotificationSeverity,
-        channel:  NotificationChannel,
-        value:    boolean,
+        channel: NotificationChannel,
+        value: boolean,
     ) => {
         setPrefs((prev) => ({
             ...prev,
@@ -716,9 +711,14 @@ export function NotificationPreferencesPanel({
             setContactErrors(errors);
             return;
         }
-        onSave(deepClonePrefs(prefs));
-        setSaved(true);
-        setTimeout(() => setSaved(false), 3000);
+        Promise.resolve(onSave(deepClonePrefs(prefs)))
+            .then(() => {
+                setSaved(true);
+                setTimeout(() => setSaved(false), 3000);
+            })
+            .catch(() => {
+                setSaved(false);
+            });
     }, [prefs, onSave]);
 
     const handleReset = useCallback(() => {
@@ -729,14 +729,6 @@ export function NotificationPreferencesPanel({
 
     return (
         <section className="space-y-3">
-            {/* Section header */}
-            <div className="flex items-center gap-3">
-                <h2 className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                    Notification Preferences
-                </h2>
-                <div className="h-px flex-1 bg-border" />
-            </div>
-
             <div className="space-y-3">
                 <MatrixSection
                     matrix={prefs.matrix}
@@ -769,8 +761,8 @@ export function NotificationPreferencesPanel({
                         {saved
                             ? 'Preferences saved.'
                             : isDirty
-                            ? 'You have unsaved changes.'
-                            : 'All changes saved.'}
+                                ? 'You have unsaved changes.'
+                                : 'All changes saved.'}
                     </p>
                     <div className="flex items-center gap-2">
                         <Button
