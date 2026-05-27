@@ -9,7 +9,6 @@ import {
     MoreHorizontal,
     ShieldCheck,
     Shield,
-    Eye,
     UserX,
     UserCheck,
     Trash2,
@@ -32,7 +31,7 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type UserRole   = 'super_admin' | 'admin' | 'engineer' | 'viewer';
+export type UserRole   = 'super_admin' | 'admin' | 'engineer';
 export type UserStatus = 'active' | 'suspended' | 'invited';
 
 export interface SystemUser {
@@ -86,13 +85,6 @@ const ROLE_CFG = {
         pill:      'bg-teal-100 text-teal-700 dark:bg-teal-900/50 dark:text-teal-300',
         rank:      2,
     },
-    viewer: {
-        label:     'Viewer',
-        icon:      Eye,
-        iconClass: 'text-muted-foreground',
-        pill:      'bg-muted text-muted-foreground',
-        rank:      3,
-    },
 } as const satisfies Record<UserRole, {
     label:     string;
     icon:      React.ElementType;
@@ -127,7 +119,7 @@ const STATUS_CFG = {
     pill:      string;
 }>;
 
-const ROLES: UserRole[] = ['super_admin', 'admin', 'engineer', 'viewer'];
+const ROLES: UserRole[] = ['super_admin', 'admin', 'engineer'];
 
 type FilterRole   = UserRole   | 'all';
 type FilterStatus = UserStatus | 'all';
@@ -274,7 +266,7 @@ function InviteForm({ onSend, onCancel, isSending }: InviteFormProps) {
             </p>
             <div className="flex flex-wrap items-start gap-3">
                 {/* Email */}
-                <div className="min-w-[220px] flex-1 space-y-1">
+                <div className="min-w-55 flex-1 space-y-1">
                     <label
                         htmlFor={`${uid}-email`}
                         className="block text-[11px] font-medium uppercase tracking-widest text-muted-foreground"
@@ -354,7 +346,9 @@ function InviteForm({ onSend, onCancel, isSending }: InviteFormProps) {
 interface UserRowProps {
     user:          SystemUser;
     isSelf:        boolean;
-    isSuperAdmin:  boolean;
+    canAssignRoles: boolean;
+    canModerateUser: boolean;
+    canRemoveUser: boolean;
     onRoleChange:  (role: UserRole) => void;
     onSuspend:     () => void;
     onUnsuspend:   () => void;
@@ -364,14 +358,17 @@ interface UserRowProps {
 function UserRow({
     user,
     isSelf,
-    isSuperAdmin,
+    canAssignRoles,
+    canModerateUser,
+    canRemoveUser,
     onRoleChange,
     onSuspend,
     onUnsuspend,
     onRemove,
 }: UserRowProps) {
     const statusCfg = STATUS_CFG[user.status];
-    const canEdit   = !isSelf && isSuperAdmin;
+    const canEditRole = !isSelf && canAssignRoles;
+    const canShowActions = !isSelf && canModerateUser;
 
     return (
         <tr className={`transition-colors hover:bg-muted/20 ${user.status === 'suspended' ? 'opacity-60' : ''}`}>
@@ -401,7 +398,7 @@ function UserRow({
             <td className="px-4 py-3">
                 <RoleSelector
                     value={user.role}
-                    disabled={!canEdit}
+                    disabled={!canEditRole}
                     onChange={onRoleChange}
                 />
             </td>
@@ -429,7 +426,7 @@ function UserRow({
 
             {/* Actions */}
             <td className="px-4 py-3 text-right">
-                {!isSelf && (
+                {canShowActions && (
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon" className="h-7 w-7">
@@ -437,25 +434,25 @@ function UserRow({
                             </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-44">
-                            {isSuperAdmin && (
+                            {user.status === 'active' || user.status === 'invited' ? (
+                                <DropdownMenuItem
+                                    onClick={onSuspend}
+                                    className="gap-2 text-[13px]"
+                                >
+                                    <UserX className="h-3.5 w-3.5 text-amber-500" />
+                                    Suspend
+                                </DropdownMenuItem>
+                            ) : (
+                                <DropdownMenuItem
+                                    onClick={onUnsuspend}
+                                    className="gap-2 text-[13px]"
+                                >
+                                    <UserCheck className="h-3.5 w-3.5 text-green-500" />
+                                    Unsuspend
+                                </DropdownMenuItem>
+                            )}
+                            {canRemoveUser && (
                                 <>
-                                    {user.status === 'active' || user.status === 'invited' ? (
-                                        <DropdownMenuItem
-                                            onClick={onSuspend}
-                                            className="gap-2 text-[13px]"
-                                        >
-                                            <UserX className="h-3.5 w-3.5 text-amber-500" />
-                                            Suspend
-                                        </DropdownMenuItem>
-                                    ) : (
-                                        <DropdownMenuItem
-                                            onClick={onUnsuspend}
-                                            className="gap-2 text-[13px]"
-                                        >
-                                            <UserCheck className="h-3.5 w-3.5 text-green-500" />
-                                            Unsuspend
-                                        </DropdownMenuItem>
-                                    )}
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
                                         onClick={onRemove}
@@ -493,6 +490,7 @@ export function UserManagementTable({
 
     const currentUser = users.find((u) => u.id === currentUserId);
     const isSuperAdmin = currentUser?.role === 'super_admin';
+    const isAdminOrSuperAdmin = currentUser?.role === 'super_admin' || currentUser?.role === 'admin';
 
     const hasFilters = filterRole !== 'all' || filterStatus !== 'all' || search !== '';
 
@@ -533,7 +531,7 @@ export function UserManagementTable({
         <section className="space-y-3">
             {/* Section header */}
             <div className="flex items-center gap-3">
-                <h2 className="font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
+                <h2 className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                     Users
                 </h2>
                 <div className="h-px flex-1 bg-border" />
@@ -549,7 +547,7 @@ export function UserManagementTable({
                 {/* ── Toolbar ── */}
                 <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
                     {/* Search */}
-                    <div className="relative min-w-[180px] flex-1">
+                    <div className="relative min-w-45 flex-1">
                         <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                         <Input
                             value={search}
@@ -636,7 +634,7 @@ export function UserManagementTable({
                     <div className="flex-1" />
 
                     {/* Invite button */}
-                    {isSuperAdmin && (
+                    {isAdminOrSuperAdmin && (
                         <Button
                             size="sm"
                             onClick={() => setShowInvite((v) => !v)}
@@ -660,7 +658,7 @@ export function UserManagementTable({
 
                 {/* ── Table ── */}
                 <div className="overflow-x-auto">
-                    <table className="w-full min-w-[600px]">
+                    <table className="w-full min-w-150">
                         <thead>
                             <tr className="border-b border-border bg-muted/20">
                                 {(['User', 'Role', 'Status', 'Last login', 'Joined', ''] as const).map((h, i) => (
@@ -695,7 +693,9 @@ export function UserManagementTable({
                                         key={user.id}
                                         user={user}
                                         isSelf={user.id === currentUserId}
-                                        isSuperAdmin={isSuperAdmin}
+                                        canAssignRoles={isSuperAdmin}
+                                        canModerateUser={isAdminOrSuperAdmin}
+                                        canRemoveUser={isSuperAdmin}
                                         onRoleChange={(role) => onRoleChange(user.id, role)}
                                         onSuspend={() => onSuspend(user.id)}
                                         onUnsuspend={() => onUnsuspend(user.id)}

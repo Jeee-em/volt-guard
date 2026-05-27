@@ -75,7 +75,7 @@ const TYPE_CFG = {
     },
     current_sensor: {
         label:     'Current',
-        sublabel:  'ACS712 Sensor',
+        sublabel:  'PZCT-02 CT SENSOR',
         icon:      Activity,
         color:     '#BA7517',
         bgClass:   'bg-amber-50 dark:bg-amber-950/30',
@@ -83,7 +83,7 @@ const TYPE_CFG = {
     },
     voltage_sensor: {
         label:     'Voltage',
-        sublabel:  'ZMPT101B Sensor',
+        sublabel:  'ZMPT101B AC voltage sensor',
         icon:      Zap,
         color:     '#378ADD',
         bgClass:   'bg-blue-50 dark:bg-blue-950/30',
@@ -426,7 +426,7 @@ export function DeviceStatusOverviewStrip({ devices }: DeviceStatusOverviewStrip
         <section className="space-y-3">
             {/* Section header */}
             <div className="flex items-center gap-3">
-                <h2 className="font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
+                <h2 className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                     Device Overview
                 </h2>
                 <div className="h-px flex-1 bg-border" />

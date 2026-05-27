@@ -47,6 +47,46 @@ export function useDevices(): {
         const db = getDatabase(app);
         const devicesRef = ref(db, 'devices');
 
+        const resolveStatusForDevice = async (
+            deviceId: string,
+            status: 'active' | 'inactive' | 'maintenance',
+            lastSeen?: number,
+        ): Promise<Device> => {
+            const readingsRef = ref(db, `readings/${deviceId}`);
+            const latestReadingQuery = query(
+                readingsRef,
+                orderByChild('timestamp'),
+                limitToLast(1)
+            );
+
+            let calculatedStatus: 'active' | 'inactive' | 'maintenance' = status === 'maintenance' ? 'maintenance' : 'inactive';
+            let actualLastSeen = lastSeen ?? 0;
+
+            const readingSnapshot = await get(latestReadingQuery);
+
+            if (readingSnapshot.exists()) {
+                readingSnapshot.forEach((readingChild) => {
+                    const reading = readingChild.val();
+                    actualLastSeen = Number(reading.timestamp);
+                });
+
+                if (actualLastSeen > 0 && status !== 'maintenance') {
+                    const timeSinceLastReading = Date.now() - actualLastSeen;
+                    const thresholdMs = 2 * 60 * 1000;
+                    calculatedStatus = timeSinceLastReading < thresholdMs ? 'active' : 'inactive';
+                }
+            }
+
+            return {
+                deviceId,
+                name: deviceId,
+                type: 'power_monitor',
+                status: calculatedStatus,
+                actualLastSeen: actualLastSeen || undefined,
+                lastSeen: actualLastSeen || undefined,
+            };
+        };
+
         const buildDevicesFromReadings = async () => {
             try {
                 const readingsSnapshot = await get(ref(db, 'readings'));
@@ -64,45 +104,9 @@ export function useDevices(): {
                     return;
                 }
 
-                const devicesList: Device[] = [];
-                const statusPromises = deviceIds.map((deviceId) => new Promise<void>((resolve) => {
-                    const readingsRef = ref(db, `readings/${deviceId}`);
-                    const latestReadingQuery = query(
-                        readingsRef,
-                        orderByChild('timestamp'),
-                        limitToLast(1)
-                    );
-
-                    onValue(latestReadingQuery, (readingSnapshot) => {
-                        let calculatedStatus: 'active' | 'inactive' | 'maintenance' = 'inactive';
-                        let actualLastSeen = 0;
-
-                        if (readingSnapshot.exists()) {
-                            readingSnapshot.forEach((readingChild) => {
-                                const reading = readingChild.val();
-                                actualLastSeen = Number(reading.timestamp);
-                            });
-
-                            if (actualLastSeen > 0) {
-                                const timeSinceLastReading = Date.now() - actualLastSeen;
-                                const thresholdMs = 2 * 60 * 1000;
-                                calculatedStatus = timeSinceLastReading < thresholdMs ? 'active' : 'inactive';
-                            }
-                        }
-
-                        devicesList.push({
-                            deviceId,
-                            name: deviceId,
-                            type: 'power_monitor',
-                            status: calculatedStatus,
-                            actualLastSeen: actualLastSeen || undefined,
-                            lastSeen: actualLastSeen || undefined,
-                        });
-                        resolve();
-                    }, { onlyOnce: true });
-                }));
-
-                await Promise.all(statusPromises);
+                const devicesList = await Promise.all(
+                    deviceIds.map((deviceId) => resolveStatusForDevice(deviceId, 'inactive')),
+                );
                 devicesList.sort((a, b) => a.deviceId.localeCompare(b.deviceId));
                 setDevices(devicesList);
                 setLoading(false);
@@ -113,66 +117,41 @@ export function useDevices(): {
         };
 
         const handleValue = async (snapshot: DataSnapshot) => {
-            if (!snapshot.exists() || !snapshot.hasChildren()) {
-                await buildDevicesFromReadings();
-                return;
-            }
-            const devicesList: Device[] = [];
+            try {
+                if (!snapshot.exists() || !snapshot.hasChildren()) {
+                    await buildDevicesFromReadings();
+                    return;
+                }
+                const devicePromises: Promise<Device>[] = [];
 
-            const statusPromises: Promise<void>[] = [];
-
-            snapshot.forEach((childSnapshot) => {
-                const val = childSnapshot.val();
-                const deviceId = childSnapshot.key || '';
-
-                const statusPromise = new Promise<void>((resolve) => {
-                    // Query the latest power reading for this device
-                    const readingsRef = ref(db, `readings/${deviceId}`);
-                    const latestReadingQuery = query(
-                        readingsRef,
-                        orderByChild('timestamp'),
-                        limitToLast(1)
-                    );
-
-                    onValue(latestReadingQuery, (readingSnapshot) => {
-                        let calculatedStatus: 'active' | 'inactive' | 'maintenance' = 'inactive';
-                        let actualLastSeen = 0;
-
-                        // If manually set to maintenance, respect that
-                        if (val.status === 'maintenance') {
-                            calculatedStatus = 'maintenance';
-                        }
-
-                        if (readingSnapshot.exists()) {
-                            readingSnapshot.forEach((readingChild) => {
-                                const reading = readingChild.val();
-                                actualLastSeen = Number(reading.timestamp);
-                            });
-
-                            if (actualLastSeen > 0 && val.status !== 'maintenance') {
-                                // Power monitors send data every 30 seconds; consider active within 2 minutes
-                                const timeSinceLastReading = Date.now() - actualLastSeen;
-                                const thresholdMs = 2 * 60 * 1000; // 2 minutes
-                                calculatedStatus = timeSinceLastReading < thresholdMs ? 'active' : 'inactive';
-                            }
-                        }
-
-                        devicesList.push({
+                snapshot.forEach((childSnapshot) => {
+                    const val = childSnapshot.val();
+                    const deviceId = childSnapshot.key || '';
+                    devicePromises.push(
+                        resolveStatusForDevice(
                             deviceId,
-                            ...val,
-                            status: calculatedStatus,
-                            actualLastSeen: actualLastSeen > 0 ? actualLastSeen : val.lastSeen,
-                        });
-                        resolve();
-                    }, { onlyOnce: true });
+                            val.status === 'maintenance' ? 'maintenance' : 'active',
+                            val.lastSeen,
+                        ).then((resolved) => ({
+                            ...resolved,
+                            name: typeof val.name === 'string' ? val.name : resolved.name,
+                            type: typeof val.type === 'string' ? val.type : resolved.type,
+                            location: typeof val.location === 'string' ? val.location : resolved.location,
+                            latitude: typeof val.latitude === 'number' ? val.latitude : resolved.latitude,
+                            longitude: typeof val.longitude === 'number' ? val.longitude : resolved.longitude,
+                            status: val.status === 'maintenance' ? 'maintenance' : resolved.status,
+                        })),
+                    );
                 });
 
-                statusPromises.push(statusPromise);
-            });
-
-            await Promise.all(statusPromises);
-            setDevices(devicesList);
-            setLoading(false);
+                const resolvedList = await Promise.all(devicePromises);
+                resolvedList.sort((a, b) => a.deviceId.localeCompare(b.deviceId));
+                setDevices(resolvedList);
+                setLoading(false);
+            } catch (err) {
+                setError(err instanceof Error ? err : new Error('Failed to load devices'));
+                setLoading(false);
+            }
         };
 
         const unsubscribe = onValue(devicesRef, handleValue, (err) => {

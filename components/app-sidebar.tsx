@@ -62,12 +62,50 @@ const baseNavMain: NavItem[] = [
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { user, loading } = useAuth();
+  const [userRole, setUserRole] = React.useState<string | null>(null);
   // const { criticalCount } = useAlerts();
 
-  // Check if user authenticated with email/password
-  const isEmailPasswordUser = user?.providerData?.some(
-    provider => provider.providerId === "password"
-  ) ?? false;
+  React.useEffect(() => {
+    let mounted = true;
+
+    if (!user) {
+      setUserRole(null);
+      return;
+    }
+
+    const loadRole = async () => {
+      try {
+        const response = await fetch('/api/me/role', {
+          method: 'GET',
+          credentials: 'same-origin',
+        });
+
+        if (!response.ok) {
+          if (mounted) {
+            setUserRole('engineer');
+          }
+          return;
+        }
+
+        const payload = (await response.json()) as { role?: string };
+        if (mounted) {
+          setUserRole(payload.role ?? 'engineer');
+        }
+      } catch {
+        if (mounted) {
+          setUserRole('engineer');
+        }
+      }
+    };
+
+    void loadRole();
+
+    return () => {
+      mounted = false;
+    };
+  }, [user]);
+
+  const canAccessAdmin = userRole === 'super_admin' || userRole === 'admin';
 
   const navMain = React.useMemo(() => {
     const items = baseNavMain.map(item => {
@@ -80,8 +118,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       return item;
     });
 
-    // Add Admin link for email/password users
-    if (isEmailPasswordUser) {
+    if (canAccessAdmin) {
       items.unshift({
         title: "Admin",
         url: "/dashboard/admin",
@@ -97,7 +134,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     }
 
     return items;
-  }, [ isEmailPasswordUser]);
+  }, [canAccessAdmin]);
 
   // More robust check for user data - ensure we have the user object and it's been fully populated
   const navUserData = !loading && user ? {

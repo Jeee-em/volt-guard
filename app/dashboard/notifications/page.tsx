@@ -506,7 +506,7 @@ export default function NotificationsPage() {
 
   return (
     <div className='container mx-auto p-6 space-y-8'>
-      <NotificationCenterHeader
+      {/* <NotificationCenterHeader
         unreadCount={unreadCount}
         severityCounts={severityCounts}
         muteState={muteState}
@@ -515,7 +515,7 @@ export default function NotificationsPage() {
         onMute={handleMute}
         onUnmute={handleUnmute}
         onOpenSettings={() => console.log('open settings')}
-      />
+      /> */}
 
       <AlertRulesManager
         rules={rules}

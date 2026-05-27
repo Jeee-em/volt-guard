@@ -18,48 +18,46 @@ const STORAGE_KEY = 'berrymax_selected_device';
 
 export function DeviceProvider({ children }: { children: ReactNode }) {
     const { devices, loading, error } = useDevices();
-    const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+    const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(() => {
+        if (typeof window === 'undefined') return null;
+        return localStorage.getItem(STORAGE_KEY);
+    });
 
     // Initialize from localStorage and auto-select first device
     useEffect(() => {
         if (loading) return;
 
-        const stored = localStorage.getItem(STORAGE_KEY);
-
         if (devices.length === 0) {
-            if (stored && stored !== selectedDeviceId) {
-                setSelectedDeviceId(stored);
+            return;
+        }
+
+        const stored = localStorage.getItem(STORAGE_KEY);
+        const selectedExists = selectedDeviceId ? devices.some((device) => device.deviceId === selectedDeviceId) : false;
+
+        if (selectedExists) {
+            if (stored !== selectedDeviceId) {
+                localStorage.setItem(STORAGE_KEY, selectedDeviceId as string);
             }
             return;
         }
 
-        // Try to get from localStorage
-        console.log('🔄 DeviceContext - Available devices:', devices.map(d => d.deviceId));
-        console.log('💾 DeviceContext - Stored device from localStorage:', stored);
-
         if (stored) {
-            const deviceExists = devices.some(d => d.deviceId === stored);
-            if (deviceExists) {
-                console.log('✅ DeviceContext - Using stored device:', stored);
+            const storedExists = devices.some((device) => device.deviceId === stored);
+            if (storedExists) {
                 setSelectedDeviceId(stored);
                 return;
-            } else {
-                console.log('⚠️ DeviceContext - Stored device not found, will auto-select');
             }
         }
 
-        const firstActiveDevice = devices.find(d => d.status === 'active');
-        if (firstActiveDevice) {
-            setSelectedDeviceId(firstActiveDevice.deviceId);
-            localStorage.setItem(STORAGE_KEY, firstActiveDevice.deviceId);
-        } else if (devices.length > 0) {
-            setSelectedDeviceId(devices[0].deviceId);
-            localStorage.setItem(STORAGE_KEY, devices[0].deviceId);
+        const firstActiveDevice = devices.find((device) => device.status === 'active');
+        const fallbackDevice = firstActiveDevice ?? devices[0];
+        if (fallbackDevice) {
+            setSelectedDeviceId(fallbackDevice.deviceId);
+            localStorage.setItem(STORAGE_KEY, fallbackDevice.deviceId);
         }
     }, [devices, loading, selectedDeviceId]);
 
     const setSelectedDevice = (deviceId: string) => {
-        console.log('📱 DeviceContext - Setting device to:', deviceId);
         setSelectedDeviceId(deviceId);
         localStorage.setItem(STORAGE_KEY, deviceId);
     };

@@ -224,17 +224,6 @@ export default function LoginPage() {
             {isSignup ? 'Sign in' : 'Sign up'}
           </button>
         </p>
-
-        {/* Demo credentials */}
-        <div className="mt-6 rounded-lg border border-dashed border-border bg-muted/40 px-4 py-3">
-          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-            Demo credentials
-          </p>
-          <div className="space-y-0.5 font-mono text-[12px] text-foreground">
-            <p>demo@example.com</p>
-            <p>demo123456</p>
-          </div>
-        </div>
       </div>
     </div>
   );
