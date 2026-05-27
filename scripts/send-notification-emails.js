@@ -1,13 +1,14 @@
 'use strict';
 
 const admin = require('firebase-admin');
+const fs = require('fs');
 const {
     buildNotificationEmailMessage,
     createNotificationEmailTransport,
 } = require('../lib/notification-email');
 
 const REQUIRED_ENV = [
-    'FIREBASE_SERVICE_ACCOUNT_JSON',
+    // Either JSON or PATH to service account must be provided
     'FIREBASE_DATABASE_URL',
     'SMTP_HOST',
     'SMTP_PORT',
@@ -22,7 +23,24 @@ for (const key of REQUIRED_ENV) {
     }
 }
 
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+// Load service account JSON either from env or from a file path
+let serviceAccount;
+if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    try {
+        serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    } catch (err) {
+        throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON is invalid JSON');
+    }
+} else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
+    try {
+        const raw = fs.readFileSync(process.env.FIREBASE_SERVICE_ACCOUNT_PATH, 'utf8');
+        serviceAccount = JSON.parse(raw);
+    } catch (err) {
+        throw new Error(`Failed to read or parse FIREBASE_SERVICE_ACCOUNT_PATH: ${err.message}`);
+    }
+} else {
+    throw new Error('Either FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT_PATH must be set');
+}
 
 if (!admin.apps.length) {
     admin.initializeApp({
@@ -114,11 +132,32 @@ async function main() {
     }
 }
 
-main()
-    .then(() => {
+async function shutdown() {
+    // Close nodemailer transport if supported
+    try {
+        if (transport && typeof transport.close === 'function') {
+            transport.close();
+        }
+    } catch (err) {
+        console.warn('Error closing transport:', err);
+    }
+
+    // Delete firebase apps to close sockets
+    try {
+        await Promise.all(admin.apps.map((app) => app.delete()));
+    } catch (err) {
+        console.warn('Error deleting firebase apps:', err);
+    }
+}
+
+(async () => {
+    try {
+        await main();
         console.log('Notification email job completed.');
-    })
-    .catch((error) => {
+    } catch (error) {
         console.error('Notification email job failed:', error);
         process.exitCode = 1;
-    });
+    } finally {
+        await shutdown();
+    }
+})();
