@@ -70,6 +70,13 @@ export interface NotificationItem {
     receivedAt: string;
     /** Deep-link to analytics page at this timestamp */
     analyticsHref: string;
+    delivery?: {
+        emailSent?: boolean;
+        emailSentAt?: string;
+        emailProvider?: string;
+        emailTrigger?: 'manual' | 'scheduled';
+        emailSentTo?: string;
+    };
 }
 
 type FilterSeverity = NotificationSeverity | 'all';
@@ -701,7 +708,6 @@ export function NotificationFeed({
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
                         <AlertDialogAction
                             onClick={handleConfirmDelete}
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                         >
                             Delete
                         </AlertDialogAction>

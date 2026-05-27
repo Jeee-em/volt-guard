@@ -20,23 +20,25 @@ import { NotificationPreferences, NotificationPreferencesPanel } from '@/compone
 import { NotificationStatsItem, NotificationStatsStrip } from '@/components/dashboard/notification-stats-strip';
 import { getThresholdForSeverity } from '@/lib/thresholds';
 
-const DEFAULT_PREFS: NotificationPreferences = {
-  matrix: {
-    critical: { in_app: true, email: true, sms: false },
-    warning: { in_app: true, email: true, sms: false },
-    info: { in_app: true, email: false, sms: false },
-  },
-  quietHours: {
-    enabled: true,
-    from: '22:00',
-    to: '07:00',
-    days: [0, 1, 2, 3, 4, 5, 6],
-  },
-  contact: {
-    email: 'engineer@example.com',
-    phone: '+63 912 345 6789',
-  },
-};
+function buildDefaultPrefs(email: string): NotificationPreferences {
+  return {
+    matrix: {
+      critical: { in_app: true, email: true, sms: false },
+      warning: { in_app: true, email: true, sms: false },
+      info: { in_app: true, email: false, sms: false },
+    },
+    quietHours: {
+      enabled: true,
+      from: '22:00',
+      to: '07:00',
+      days: [0, 1, 2, 3, 4, 5, 6],
+    },
+    contact: {
+      email,
+      phone: '',
+    },
+  };
+}
 
 const RULE_METRIC_META: Record<RuleMetric, { label: string; unit: string }> = {
   voltage: { label: 'Voltage', unit: 'V' },
@@ -136,6 +138,12 @@ export default function NotificationsPage() {
   } = useNotifications(user?.uid);
 
   const [isSaving, setIsSaving] = useState(false);
+  const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
+
+  const initialPreferences = useMemo(
+    () => buildDefaultPrefs(user?.email ?? ''),
+    [user?.email],
+  );
 
   const handleSave = useCallback(async (prefs: NotificationPreferences) => {
     setIsSaving(true);
@@ -147,6 +155,58 @@ export default function NotificationsPage() {
     });
     setIsSaving(false);
   }, []);
+
+  const handleSendEmail = useCallback(async (id: string) => {
+    if (!user?.email) {
+      toast({
+        title: 'Email not available',
+        description: 'Sign in with Google to send notification emails.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setSendingEmailId(id);
+    try {
+      console.log('[send-email] starting request', { id, uid: user.uid, email: user.email });
+      const response = await fetch(`/api/notifications/${id}/send-email`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+
+      const raw = await response.text();
+      let payload: { ok?: boolean; error?: string; email?: string; sentAt?: string } | null = null;
+      try {
+        payload = raw ? JSON.parse(raw) : null;
+      } catch (parseError) {
+        console.error('[send-email] non-json response', { status: response.status, raw });
+      }
+
+      console.log('[send-email] response', {
+        status: response.status,
+        ok: response.ok,
+        payload,
+      });
+
+      if (!response.ok) {
+        throw new Error(payload?.error || raw || 'Failed to send email.');
+      }
+
+      toast({
+        title: 'Email sent',
+        description: `Sent to ${payload?.email || user.email}.`,
+      });
+    } catch (err) {
+      console.error('[send-email] request failed', err);
+      toast({
+        title: 'Failed to send email',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      });
+    } finally {
+      setSendingEmailId(null);
+    }
+  }, [toast, user?.email]);
 
   const handleAddRule = useCallback(async (draft: RuleFormDraft) => {
     try {
@@ -364,6 +424,7 @@ export default function NotificationsPage() {
   }, [notifications]);
 
   const lastReceivedAt = notifications[0]?.receivedAt ?? null;
+  const latestNotification = notifications[0] ?? null;
 
   return (
     <div className='container mx-auto p-6 space-y-8'>
@@ -402,12 +463,18 @@ export default function NotificationsPage() {
       />
 
       <NotificationPreferencesPanel
-        initial={DEFAULT_PREFS}
+        initial={initialPreferences}
+        recipientEmail={user?.email ?? ''}
+        latestNotificationId={latestNotification?.id}
+        latestNotificationTitle={latestNotification?.title}
+        canSendLatest={Boolean(latestNotification)}
+        onSendLatestEmail={latestNotification ? () => handleSendEmail(latestNotification.id) : undefined}
+        isSendingEmail={sendingEmailId === latestNotification?.id}
         onSave={handleSave}
         isSaving={isSaving}
       />
 
-      <NotificationStatsStrip notifications={statsItems} windowDays={7} />
+      {/* <NotificationStatsStrip notifications={statsItems} windowDays={7} /> */}
     </div>
   );
 }

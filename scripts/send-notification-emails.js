@@ -1,7 +1,10 @@
 'use strict';
 
 const admin = require('firebase-admin');
-const nodemailer = require('nodemailer');
+const {
+    buildNotificationEmailMessage,
+    createNotificationEmailTransport,
+} = require('../lib/notification-email');
 
 const REQUIRED_ENV = [
     'FIREBASE_SERVICE_ACCOUNT_JSON',
@@ -30,20 +33,10 @@ if (!admin.apps.length) {
 
 const db = admin.database();
 
-const transport = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT),
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-    },
-});
+const transport = createNotificationEmailTransport();
 
 const EMAIL_FROM = process.env.SMTP_FROM || process.env.SMTP_USER;
 const MAX_AGE_DAYS = Number(process.env.EMAIL_MAX_AGE_DAYS || 7);
-const APP_BASE_URL = process.env.APP_BASE_URL || '';
-
 function parseTimeToMinutes(value) {
     const [h, m] = value.split(':').map((part) => Number(part));
     if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
@@ -63,60 +56,11 @@ function isWithinQuietHours(quietHours, now) {
     return minutes >= from || minutes < to;
 }
 
-function buildAnalyticsUrl(item) {
-    if (!item.analyticsHref) return null;
-    if (/^https?:\/\//.test(item.analyticsHref)) return item.analyticsHref;
-    if (!APP_BASE_URL) return item.analyticsHref;
-    return `${APP_BASE_URL.replace(/\/$/, '')}${item.analyticsHref}`;
-}
-
-function buildEmailSubject(item) {
-    return `[${item.severity.toUpperCase()}] ${item.title}`;
-}
-
-function buildEmailText(item) {
-    const analyticsUrl = buildAnalyticsUrl(item);
-    const value = Number(item.value || 0);
-    return [
-        `${item.title || 'Notification'}`,
-        '',
-        `${item.description || ''}`,
-        '',
-        `Rule: ${item.ruleName || 'Rule'}`,
-        `Metric: ${item.metric || 'metric'}`,
-        `Value: ${value.toFixed(2)} ${item.unit || ''}`,
-        `Threshold: ${item.threshold || 0} ${item.unit || ''}`,
-        `Received: ${item.receivedAt || new Date().toISOString()}`,
-        analyticsUrl ? `View: ${analyticsUrl}` : null,
-    ].filter(Boolean).join('\n');
-}
-
-function buildEmailHtml(item) {
-    const analyticsUrl = buildAnalyticsUrl(item);
-    const value = Number(item.value || 0);
-    return `
-        <div style="font-family: Arial, sans-serif; line-height: 1.5;">
-            <h2 style="margin: 0 0 8px;">${item.title || 'Notification'}</h2>
-            <p style="margin: 0 0 12px; color: #555;">${item.description || ''}</p>
-            <table style="border-collapse: collapse; width: 100%; margin-bottom: 12px;">
-                <tr><td><strong>Rule</strong></td><td>${item.ruleName || 'Rule'}</td></tr>
-                <tr><td><strong>Metric</strong></td><td>${item.metric || 'metric'}</td></tr>
-                <tr><td><strong>Value</strong></td><td>${value.toFixed(2)} ${item.unit || ''}</td></tr>
-                <tr><td><strong>Threshold</strong></td><td>${item.threshold || 0} ${item.unit || ''}</td></tr>
-                <tr><td><strong>Received</strong></td><td>${item.receivedAt || new Date().toISOString()}</td></tr>
-            </table>
-            ${analyticsUrl ? `<a href="${analyticsUrl}">View in analytics</a>` : ''}
-        </div>
-    `;
-}
-
 async function sendNotificationEmail(to, item) {
     await transport.sendMail({
         from: EMAIL_FROM,
         to,
-        subject: buildEmailSubject(item),
-        text: buildEmailText(item),
-        html: buildEmailHtml(item),
+        ...buildNotificationEmailMessage(item, { appBaseUrl: process.env.APP_BASE_URL || '' }),
     });
 }
 

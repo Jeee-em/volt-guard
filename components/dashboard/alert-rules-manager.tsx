@@ -357,6 +357,7 @@ function RuleRow({
     onDuplicate,
     onToggle,
 }: RuleRowProps) {
+    const [deleteOpen, setDeleteOpen] = useState(false);
     const cfg         = SEVERITY_CFG[rule.severity];
     const SevIcon     = cfg.icon;
     const unit        = getUnit(rule.metric);
@@ -437,34 +438,34 @@ function RuleRow({
                         <Copy className="h-3.5 w-3.5" /> Duplicate
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                            <DropdownMenuItem
-                                className="gap-2 text-[13px] text-destructive focus:text-destructive"
-                            >
-                                <Trash2 className="h-3.5 w-3.5" /> Delete
-                            </DropdownMenuItem>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                            <AlertDialogHeader>
-                                <AlertDialogTitle>Delete alert rule?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                    This will permanently remove "{rule.name}" and stop future notifications from it.
-                                </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                    onClick={onDelete}
-                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                >
-                                    Delete rule
-                                </AlertDialogAction>
-                            </AlertDialogFooter>
-                        </AlertDialogContent>
-                    </AlertDialog>
+                    <DropdownMenuItem
+                        onSelect={(event) => {
+                            event.preventDefault();
+                            setDeleteOpen(true);
+                        }}
+                        className="gap-2 text-[13px] text-destructive focus:text-destructive"
+                    >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                    </DropdownMenuItem>
                 </DropdownMenuContent>
             </DropdownMenu>
+
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete alert rule?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This will permanently remove "{rule.name}" and stop future notifications from it.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={onDelete}>
+                            Delete rule
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </li>
     );
 }

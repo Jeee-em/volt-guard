@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useId } from 'react';
+import { useState, useCallback, useId, useEffect } from 'react';
 import {
     Bell,
     Mail,
@@ -15,9 +15,20 @@ import {
     ToggleLeft,
     ToggleRight,
     Save,
+    Send,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -50,8 +61,14 @@ export interface NotificationPreferences {
 
 export interface NotificationPreferencesPanelProps {
     initial:  NotificationPreferences;
+    recipientEmail?: string;
+    latestNotificationId?: string;
+    latestNotificationTitle?: string;
+    canSendLatest?: boolean;
+    onSendLatestEmail?: () => Promise<void> | void;
     onSave:   (prefs: NotificationPreferences) => void;
     isSaving?: boolean;
+    isSendingEmail?: boolean;
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -311,11 +328,13 @@ function MatrixSection({ matrix, onChange }: MatrixSectionProps) {
 interface ContactSectionProps {
     contact:  ContactDetails;
     errors:   Partial<Record<keyof ContactDetails, string>>;
+    recipientEmail?: string;
     onChange: (field: keyof ContactDetails, value: string) => void;
 }
 
-function ContactSection({ contact, errors, onChange }: ContactSectionProps) {
+function ContactSection({ contact, errors, recipientEmail, onChange }: ContactSectionProps) {
     const uid = useId();
+    const lockedEmail = Boolean(recipientEmail);
 
     return (
         <Section icon={Mail} title="Contact details">
@@ -332,10 +351,18 @@ function ContactSection({ contact, errors, onChange }: ContactSectionProps) {
                         id={`${uid}-email`}
                         type="email"
                         value={contact.email}
+                        readOnly={lockedEmail}
+                        aria-readonly={lockedEmail}
+                        disabled={lockedEmail}
                         onChange={(e) => onChange('email', e.target.value)}
-                        placeholder="you@example.com"
+                        placeholder={lockedEmail ? (recipientEmail ?? '') : 'you@example.com'}
                         className="h-9 text-[13px]"
                     />
+                    {lockedEmail ? (
+                        <p className="text-[11px] text-muted-foreground">
+                            Email notifications are sent to your signed-in Google account.
+                        </p>
+                    ) : null}
                     {errors.email && (
                         <p className="text-[11px] text-destructive">{errors.email}</p>
                     )}
@@ -378,6 +405,88 @@ function ContactSection({ contact, errors, onChange }: ContactSectionProps) {
                         </div>
                     </div>
                 )}
+            </div>
+        </Section>
+    );
+}
+
+interface ManualSendSectionProps {
+    recipientEmail?: string;
+    latestNotificationTitle?: string;
+    canSendLatest?: boolean;
+    onSendLatestEmail?: () => Promise<void> | void;
+    isSendingEmail?: boolean;
+}
+
+function ManualSendSection({
+    recipientEmail,
+    latestNotificationTitle,
+    canSendLatest = false,
+    onSendLatestEmail,
+    isSendingEmail = false,
+}: ManualSendSectionProps) {
+    const [confirmOpen, setConfirmOpen] = useState(false);
+
+    const handleOpenChange = useCallback((open: boolean) => {
+        setConfirmOpen(open);
+    }, []);
+
+    const handleConfirm = useCallback(async () => {
+        if (!onSendLatestEmail) return;
+        await onSendLatestEmail();
+        setConfirmOpen(false);
+    }, [onSendLatestEmail]);
+
+    const label = latestNotificationTitle ? `Send "${latestNotificationTitle}" now` : 'Send latest notification';
+
+    return (
+        <Section icon={Send} title="Manual email send">
+            <div className="space-y-3">
+                <div className="rounded-lg border border-border bg-muted/20 px-3 py-2">
+                    <p className="text-[11px] text-muted-foreground">
+                        {recipientEmail
+                            ? `Manual emails are sent to ${recipientEmail}.`
+                            : 'Sign in with Google to enable manual email sending.'}
+                    </p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                        {latestNotificationTitle
+                            ? `This will send the latest notification: ${latestNotificationTitle}.`
+                            : 'No notification is available to send yet.'}
+                    </p>
+                </div>
+
+                <Button
+                    type="button"
+                    onClick={() => setConfirmOpen(true)}
+                    disabled={!canSendLatest || isSendingEmail}
+                    className="w-full gap-2"
+                >
+                    <Send className="h-3.5 w-3.5" />
+                    {isSendingEmail ? 'Sending…' : label}
+                </Button>
+
+                <AlertDialog open={confirmOpen} onOpenChange={handleOpenChange}>
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>Send manual email?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                {latestNotificationTitle
+                                    ? `This will send the latest notification "${latestNotificationTitle}" to ${recipientEmail || 'your signed-in Gmail account'}.`
+                                    : `This will send the latest notification to ${recipientEmail || 'your signed-in Gmail account'}.`}
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                                onClick={handleConfirm}
+                                disabled={!canSendLatest || isSendingEmail}
+                                className="bg-primary text-primary-foreground hover:bg-primary/90"
+                            >
+                                {isSendingEmail ? 'Sending…' : 'Send email'}
+                            </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
             </div>
         </Section>
     );
@@ -537,12 +646,38 @@ function QuietHoursSection({ quietHours, onChange }: QuietHoursSectionProps) {
 
 export function NotificationPreferencesPanel({
     initial,
+    recipientEmail,
+    latestNotificationId,
+    latestNotificationTitle,
+    canSendLatest = false,
+    onSendLatestEmail,
     onSave,
     isSaving = false,
+    isSendingEmail = false,
 }: NotificationPreferencesPanelProps) {
     const [prefs, setPrefs] = useState<NotificationPreferences>(() => deepClonePrefs(initial));
     const [contactErrors, setContactErrors] = useState<Partial<Record<keyof ContactDetails, string>>>({});
     const [saved, setSaved] = useState<boolean>(false);
+
+    useEffect(() => {
+        setPrefs(deepClonePrefs(initial));
+        setContactErrors({});
+        setSaved(false);
+    }, [initial]);
+
+    useEffect(() => {
+        if (!recipientEmail) return;
+        setPrefs((prev) => {
+            if (prev.contact.email === recipientEmail) return prev;
+            return {
+                ...prev,
+                contact: {
+                    ...prev.contact,
+                    email: recipientEmail,
+                },
+            };
+        });
+    }, [recipientEmail]);
 
     const isDirty = JSON.stringify(prefs) !== JSON.stringify(initial);
 
@@ -611,7 +746,16 @@ export function NotificationPreferencesPanel({
                 <ContactSection
                     contact={prefs.contact}
                     errors={contactErrors}
+                    recipientEmail={recipientEmail}
                     onChange={handleContactChange}
+                />
+
+                <ManualSendSection
+                    recipientEmail={recipientEmail}
+                    latestNotificationTitle={latestNotificationTitle}
+                    canSendLatest={canSendLatest && Boolean(latestNotificationId) && Boolean(onSendLatestEmail)}
+                    onSendLatestEmail={onSendLatestEmail}
+                    isSendingEmail={isSendingEmail}
                 />
 
                 <QuietHoursSection

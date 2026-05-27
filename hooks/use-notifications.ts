@@ -88,6 +88,17 @@ function normalizeNotification(id: string, raw: unknown): StoredNotification {
         receivedAt,
         analyticsHref: typeof value.analyticsHref === 'string' ? value.analyticsHref : '/dashboard/analytics',
         receivedAtMs,
+        delivery: value.delivery && typeof value.delivery === 'object'
+            ? {
+                emailSent: typeof value.delivery.emailSent === 'boolean' ? value.delivery.emailSent : undefined,
+                emailSentAt: typeof value.delivery.emailSentAt === 'string' ? value.delivery.emailSentAt : undefined,
+                emailProvider: typeof value.delivery.emailProvider === 'string' ? value.delivery.emailProvider : undefined,
+                emailTrigger: value.delivery.emailTrigger === 'manual' || value.delivery.emailTrigger === 'scheduled'
+                    ? value.delivery.emailTrigger
+                    : undefined,
+                emailSentTo: typeof value.delivery.emailSentTo === 'string' ? value.delivery.emailSentTo : undefined,
+            }
+            : undefined,
     };
 }
 
@@ -147,6 +158,23 @@ export function useNotifications(
 
     const db = useMemo(() => getDatabase(app), []);
     const cleanupDoneRef = useRef(false);
+    const snapshotsRef = useRef<Record<string, StoredNotification[]>>({});
+    const pendingPathsRef = useRef<Set<string>>(new Set());
+
+    const notifyPaths = useMemo(() => [
+        `user_notifications/${userId}`,
+        `notifications/${userId}`,
+    ].filter((path): path is string => Boolean(userId) && path.length > 0), [userId]);
+
+    const commitSnapshots = useCallback(() => {
+        const all = Object.values(snapshotsRef.current).flat();
+        const merged = mergeUniqueNotifications(all, []);
+        setNotifications(merged);
+        const oldest = merged[merged.length - 1];
+        setCursor(oldest ? oldest.receivedAtMs : null);
+        setHasMore(merged.length >= pageSize);
+        setLoading(pendingPathsRef.current.size > 0);
+    }, [pageSize]);
 
     useEffect(() => {
         cleanupDoneRef.current = false;
@@ -158,41 +186,48 @@ export function useNotifications(
             setLoading(false);
             setHasMore(false);
             setCursor(null);
+            snapshotsRef.current = {};
+            pendingPathsRef.current = new Set();
             return;
         }
 
         setLoading(true);
         setError(null);
+        snapshotsRef.current = {};
+        pendingPathsRef.current = new Set(notifyPaths);
 
-        const notificationsRef = ref(db, `user_notifications/${userId}`);
-        const latestQuery = query(
-            notificationsRef,
-            orderByChild('receivedAtMs'),
-            limitToLast(pageSize)
-        );
+        const unsubscribers: Array<() => void> = [];
 
-        const handleValue = (snapshot: DataSnapshot) => {
-            const latest = mergeNotifications(snapshot.val());
-            setNotifications((prev) => {
-                const merged = mergeUniqueNotifications(latest, prev);
-                const oldest = merged[merged.length - 1];
-                setCursor(oldest ? oldest.receivedAtMs : null);
-                setHasMore(latest.length >= pageSize);
-                return merged;
+        notifyPaths.forEach((path) => {
+            const notificationsRef = ref(db, path);
+            const latestQuery = query(
+                notificationsRef,
+                orderByChild('receivedAtMs'),
+                limitToLast(pageSize)
+            );
+
+            const handleValue = (snapshot: DataSnapshot) => {
+                snapshotsRef.current[path] = mergeNotifications(snapshot.val());
+                pendingPathsRef.current.delete(path);
+                commitSnapshots();
+            };
+
+            const unsubscribe = onValue(latestQuery, handleValue, (err) => {
+                setError(err as Error);
+                pendingPathsRef.current.delete(path);
+                commitSnapshots();
             });
-            setLoading(false);
-        };
 
-        const unsubscribe = onValue(latestQuery, handleValue, (err) => {
-            setError(err as Error);
-            setLoading(false);
+            unsubscribers.push(() => {
+                off(latestQuery, 'value', handleValue);
+                unsubscribe();
+            });
         });
 
         return () => {
-            off(latestQuery, 'value', handleValue);
-            unsubscribe();
+            unsubscribers.forEach((unsubscribe) => unsubscribe());
         };
-    }, [db, pageSize, userId]);
+    }, [commitSnapshots, db, notifyPaths, pageSize, userId]);
 
     useEffect(() => {
         if (!userId || cleanupDoneRef.current) return;
@@ -200,19 +235,22 @@ export function useNotifications(
 
         const cleanupOld = async () => {
             const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-            const notificationsRef = ref(db, `user_notifications/${userId}`);
-            const oldQuery = query(
-                notificationsRef,
-                orderByChild('receivedAtMs'),
-                endAt(cutoff)
-            );
-            const snapshot = await get(oldQuery);
-            const deletions: Promise<void>[] = [];
-            snapshot.forEach((child) => {
-                deletions.push(remove(child.ref));
-            });
-            if (deletions.length > 0) {
-                await Promise.all(deletions);
+            const paths = [`user_notifications/${userId}`, `notifications/${userId}`];
+            for (const path of paths) {
+                const notificationsRef = ref(db, path);
+                const oldQuery = query(
+                    notificationsRef,
+                    orderByChild('receivedAtMs'),
+                    endAt(cutoff)
+                );
+                const snapshot = await get(oldQuery);
+                const deletions: Promise<void>[] = [];
+                snapshot.forEach((child) => {
+                    deletions.push(remove(child.ref));
+                });
+                if (deletions.length > 0) {
+                    await Promise.all(deletions);
+                }
             }
         };
 
@@ -226,15 +264,14 @@ export function useNotifications(
         setLoadingMore(true);
         setError(null);
         try {
-            const notificationsRef = ref(db, `user_notifications/${userId}`);
-            const olderQuery = query(
-                notificationsRef,
-                orderByChild('receivedAtMs'),
-                endAt(cursor - 1),
-                limitToLast(pageSize)
+            const pathResults = await Promise.all([
+                get(query(ref(db, `user_notifications/${userId}`), orderByChild('receivedAtMs'), endAt(cursor - 1), limitToLast(pageSize))),
+                get(query(ref(db, `notifications/${userId}`), orderByChild('receivedAtMs'), endAt(cursor - 1), limitToLast(pageSize))),
+            ]);
+            const older = mergeUniqueNotifications(
+                pathResults.flatMap((snapshot) => mergeNotifications(snapshot.val())),
+                [],
             );
-            const snapshot = await get(olderQuery);
-            const older = mergeNotifications(snapshot.val());
             setNotifications((prev) => {
                 const merged = mergeUniqueNotifications(older, prev);
                 const oldest = merged[merged.length - 1];

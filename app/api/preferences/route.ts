@@ -19,8 +19,21 @@ export async function PUT(request: Request) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
+        if (!decoded.email) {
+            return NextResponse.json(
+                { error: 'Signed-in account does not have an email address.' },
+                { status: 400 },
+            );
+        }
+
+        const contact = prefs.contact && typeof prefs.contact === 'object' ? prefs.contact : {};
+
         const payload = {
             ...prefs,
+            contact: {
+                ...contact,
+                email: decoded.email,
+            },
             updatedAt: new Date().toISOString(),
         };
 
