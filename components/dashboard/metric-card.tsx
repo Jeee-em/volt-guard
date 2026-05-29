@@ -98,10 +98,10 @@ export function TotalPowerCard({ maxWatts = 3000, deviceId }: TotalPowerCardProp
                                 Phase {i + 1}
                             </span>
                             <span className="font-mono text-[13px] font-medium text-foreground">
-                                {(latest as any)[`${p}_power`].toFixed(1)} W
+                                {((latest as any)[`${p}_power`] ?? 0).toFixed(1)} W
                             </span>
                             <span className="text-[10px] text-muted-foreground">
-                                {(latest as any)[`${p}_voltage`].toFixed(1)} V
+                                {((latest as any)[`${p}_voltage`] ?? 0).toFixed(1)} V
                             </span>
                         </div>
                     ))}
@@ -174,13 +174,13 @@ export function PhaseCard({ phase, maxVoltage = 240, maxCurrent = 16, deviceId, 
     const colorClass = isHighCurrent
         ? 'text-rose-600 dark:text-rose-400'
         : voltage === 0
-        ? 'text-muted-foreground'
-        : 'text-sky-600 dark:text-sky-400';
+            ? 'text-muted-foreground'
+            : 'text-sky-600 dark:text-sky-400';
     const bgClass = isHighCurrent
         ? 'bg-rose-100 dark:bg-rose-900/40'
         : voltage === 0
-        ? 'bg-muted'
-        : 'bg-sky-100 dark:bg-sky-900/40';
+            ? 'bg-muted'
+            : 'bg-sky-100 dark:bg-sky-900/40';
 
     return (
         <Card className={`flex flex-col gap-0 p-[1.1rem] pb-[0.9rem] shadow-none ${className ?? ''}`}>
