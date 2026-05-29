@@ -9,6 +9,7 @@ type AllowedMetric = (typeof ALLOWED_METRICS)[number];
 
 interface ManagedReadingRecord {
     id: string;
+    deviceId?: string;
     metric: AllowedMetric;
     value: number;
     unit?: string;
@@ -17,6 +18,15 @@ interface ManagedReadingRecord {
     updatedAt: string;
     createdBy: string;
     updatedBy: string;
+}
+
+interface ManagedReadingResponseRow {
+    id: string;
+    deviceId?: string;
+    metric: AllowedMetric;
+    value: number;
+    unit?: string;
+    recordedAt: string;
 }
 
 interface RawReadingRecord {
@@ -108,6 +118,7 @@ function expandRawReading(raw: RawReadingRecord): Array<Omit<ManagedReadingRecor
     return entries
         .filter((entry): entry is { metric: AllowedMetric; value: number } => entry.value !== null)
         .map((entry) => ({
+            deviceId: undefined,
             metric: entry.metric,
             value: entry.value,
             unit: normalizeUnit(entry.metric),
@@ -115,14 +126,19 @@ function expandRawReading(raw: RawReadingRecord): Array<Omit<ManagedReadingRecor
         }));
 }
 
-async function bootstrapManagedReadings() {
+async function bootstrapManagedReadings(): Promise<ManagedReadingResponseRow[]> {
     const snapshot = await getAdminDb().ref('readings').get();
     const readingsByDevice = (snapshot.val() || {}) as Record<string, Record<string, RawReadingRecord>>;
     const expanded: Array<Omit<ManagedReadingRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy'>> = [];
 
-    Object.values(readingsByDevice).forEach((rowsByKey) => {
+    Object.entries(readingsByDevice).forEach(([deviceId, rowsByKey]) => {
         Object.values(rowsByKey || {}).forEach((raw) => {
-            expanded.push(...expandRawReading(raw));
+            expanded.push(
+                ...expandRawReading(raw).map((row) => ({
+                    ...row,
+                    deviceId,
+                }))
+            );
         });
     });
 
@@ -131,17 +147,18 @@ async function bootstrapManagedReadings() {
         .slice(0, 1000);
 
     if (latest.length === 0) {
-        return [] as Array<{ id: string; metric: AllowedMetric; value: number; unit: string | undefined; recordedAt: string }>;
+        return [];
     }
 
     const now = new Date().toISOString();
     const updates: Record<string, ManagedReadingRecord> = {};
-    const responseRows: Array<{ id: string; metric: AllowedMetric; value: number; unit: string | undefined; recordedAt: string }> = [];
+    const responseRows: ManagedReadingResponseRow[] = [];
 
     latest.forEach((row) => {
         const id = randomUUID();
         const record: ManagedReadingRecord = {
             id,
+            deviceId: row.deviceId,
             metric: row.metric,
             value: row.value,
             unit: row.unit,
@@ -154,6 +171,7 @@ async function bootstrapManagedReadings() {
         updates[`${READINGS_PATH}/${id}`] = record;
         responseRows.push({
             id,
+            deviceId: record.deviceId,
             metric: record.metric,
             value: record.value,
             unit: record.unit,
@@ -165,8 +183,9 @@ async function bootstrapManagedReadings() {
     return responseRows;
 }
 
-function validatePayload(input: unknown): { ok: true; metric: AllowedMetric; value: number; unit?: string; recordedAt: string } | { ok: false; error: string } {
+function validatePayload(input: unknown): { ok: true; deviceId?: string; metric: AllowedMetric; value: number; unit?: string; recordedAt: string } | { ok: false; error: string } {
     const payload = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
+    const deviceId = typeof payload.deviceId === 'string' ? payload.deviceId : undefined;
     const metric = payload.metric;
     const value = Number(payload.value);
     const unit = typeof payload.unit === 'string' ? payload.unit : undefined;
@@ -185,6 +204,7 @@ function validatePayload(input: unknown): { ok: true; metric: AllowedMetric; val
 
     return {
         ok: true,
+        deviceId,
         metric,
         value,
         unit,
@@ -192,15 +212,18 @@ function validatePayload(input: unknown): { ok: true; metric: AllowedMetric; val
     };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
     try {
         await requireSuperAdmin();
+        const { searchParams } = new URL(request.url);
+        const deviceId = searchParams.get('deviceId')?.trim() || '';
         const snapshot = await getAdminDb().ref(READINGS_PATH).get();
         const data = (snapshot.val() || {}) as Record<string, ManagedReadingRecord>;
 
-        let rows = Object.entries(data)
+        let rows: ManagedReadingResponseRow[] = Object.entries(data)
             .map(([id, value]) => ({
                 id,
+                deviceId: value.deviceId,
                 metric: value.metric,
                 value: Number(value.value),
                 unit: value.unit,
@@ -208,8 +231,15 @@ export async function GET() {
             }))
             .sort((a, b) => Date.parse(b.recordedAt) - Date.parse(a.recordedAt));
 
+        if (deviceId) {
+            rows = rows.filter((row) => row.deviceId === deviceId);
+        }
+
         if (rows.length === 0) {
             rows = await bootstrapManagedReadings();
+            if (deviceId) {
+                rows = rows.filter((row) => row.deviceId === deviceId);
+            }
         }
 
         return NextResponse.json({ ok: true, records: rows });
@@ -234,6 +264,7 @@ export async function POST(request: Request) {
 
         const record: ManagedReadingRecord = {
             id,
+            deviceId: validated.deviceId,
             metric: validated.metric,
             value: validated.value,
             unit: normalizeUnit(validated.metric, validated.unit),
@@ -245,7 +276,7 @@ export async function POST(request: Request) {
         };
 
         await getAdminDb().ref(`${READINGS_PATH}/${id}`).set(record);
-        return NextResponse.json({ ok: true, record: { id, metric: record.metric, value: record.value, unit: record.unit, recordedAt: record.recordedAt } }, { status: 201 });
+        return NextResponse.json({ ok: true, record: { id, deviceId: record.deviceId, metric: record.metric, value: record.value, unit: record.unit, recordedAt: record.recordedAt } }, { status: 201 });
     } catch (error) {
         const message = getErrorMessage(error);
         const status = message === 'Unauthorized' ? 401 : message === 'Forbidden' ? 403 : 500;

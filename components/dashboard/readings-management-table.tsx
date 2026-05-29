@@ -65,6 +65,7 @@ export interface ReadingRecord {
 interface ReadingsManagementTableProps {
     thresholds?: ThresholdConfig;
     isSuperAdmin: boolean;
+    deviceId?: string | null;
 }
 
 const LEVEL_CFG: Record<ReadingLevel, { icon: React.ElementType; label: string; pill: string }> = {
@@ -187,7 +188,7 @@ function SortBtn({
     );
 }
 
-export function ReadingsManagementTable({ thresholds, isSuperAdmin }: ReadingsManagementTableProps) {
+export function ReadingsManagementTable({ thresholds, isSuperAdmin, deviceId }: ReadingsManagementTableProps) {
     const [records, setRecords] = useState<ReadingRecord[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -225,7 +226,9 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin }: ReadingsMa
         setLoading(true);
         setError(null);
         try {
-            const response = await fetch('/api/admin/readings', {
+            const url = deviceId ? `/api/admin/readings?deviceId=${encodeURIComponent(deviceId)}` : '/api/admin/readings';
+            console.debug('[ReadingsManagementTable] loading records', { deviceId, url });
+            const response = await fetch(url, {
                 method: 'GET',
                 credentials: 'same-origin',
             });
@@ -239,6 +242,10 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin }: ReadingsMa
             if (!response.ok) {
                 throw new Error(payload?.error || raw || 'Failed to load records.');
             }
+            console.debug('[ReadingsManagementTable] loaded records', {
+                deviceId,
+                count: payload?.records?.length ?? 0,
+            });
             setRecords(payload?.records ?? []);
         } catch (err) {
             setError(getErrorMessage(err));
@@ -246,7 +253,7 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin }: ReadingsMa
         } finally {
             setLoading(false);
         }
-    }, [isSuperAdmin]);
+    }, [deviceId, isSuperAdmin]);
 
     useEffect(() => {
         void loadRecords();

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useDevice } from '@/context/DeviceContext';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -21,6 +22,7 @@ function getErrorMessage(error: unknown): string {
 export default function AdminPage() {
     const router = useRouter();
     const { user, loading: authLoading } = useAuth();
+    const { selectedDeviceId } = useDevice();
     const { toast } = useToast();
     const { thresholds } = useThresholds(user?.uid);
 
@@ -250,6 +252,7 @@ export default function AdminPage() {
                         <ReadingsManagementTable
                             thresholds={thresholds}
                             isSuperAdmin={isSuperAdmin}
+                            deviceId={selectedDeviceId}
                         />
                     )}
                 </>
