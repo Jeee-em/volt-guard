@@ -1,10 +1,30 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, Minus, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+    TrendingUp,
+    TrendingDown,
+    Minus,
+    AlertTriangle,
+    AlertCircle,
+    ChevronDown,
+    ChevronUp,
+    RotateCcw,
+    Check,
+    Filter,
+} from 'lucide-react';
 import type { ChartDataPoint } from '@/components/dashboard/sensor-chart-shared';
 import type { SignalThreshold, ThresholdConfig, ThresholdMetricKey, ThresholdMetricMeta } from '@/lib/thresholds';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -388,48 +408,113 @@ export function ThresholdStatsPanel({
     onThresholdReset,
     saving,
 }: ThresholdStatsPanelProps) {
+    const [visibleMetrics, setVisibleMetrics] = useState<Set<string>>(
+        () => new Set(metrics.map((metric) => metric.key))
+    );
+
+    useEffect(() => {
+        setVisibleMetrics((prev) => {
+            const next = new Set(metrics.map((metric) => metric.key));
+            if (prev.size === 0) return next;
+
+            const preserved = new Set<string>();
+            for (const metric of metrics) {
+                if (prev.has(metric.key)) preserved.add(metric.key);
+            }
+
+            return preserved.size > 0 ? preserved : next;
+        });
+    }, [metrics]);
+
     const statsMap = useMemo(() => {
         const map: Record<string, SignalStats | null> = {};
-        for (const m of metrics) {
-            map[m.key] = computeStats(data, m.key);
+        for (const metric of metrics) {
+            map[metric.key] = computeStats(data, metric.key);
         }
         return map;
     }, [data, metrics]);
 
     const sampleLabel = data.length === 1 ? 'sample' : 'samples';
+    const visibleCount = visibleMetrics.size;
+    const allVisible = metrics.length > 0 && visibleCount === metrics.length;
+
+    const toggleMetric = (key: string) => {
+        setVisibleMetrics((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) {
+                if (next.size === 1) return next;
+                next.delete(key);
+            } else {
+                next.add(key);
+            }
+            return next;
+        });
+    };
+
+    const showAllMetrics = () => {
+        setVisibleMetrics(new Set(metrics.map((metric) => metric.key)));
+    };
 
     return (
         <section className="space-y-3">
-            {/* Section header */}
             <div className="flex items-center gap-3">
                 <h2 className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                     Statistics & Thresholds
                 </h2>
                 <div className="h-px flex-1 bg-border" />
-                <span className="text-[11px] text-muted-foreground">
-                    {data.length} {sampleLabel}
-                </span>
+                <div className="flex items-center gap-2">
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]">
+                                <Filter className="h-3 w-3" />
+                                <span>{allVisible ? 'Filter metrics' : `${visibleCount}/${metrics.length} visible`}</span>
+                                <ChevronDown className="h-3 w-3" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuLabel className="text-[11px]">Metrics</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={showAllMetrics} className="gap-2 text-[13px]">
+                                <span>All metrics</span>
+                                {allVisible && <Check className="ml-auto h-3.5 w-3.5" />}
+                            </DropdownMenuItem>
+                            {metrics.map(({ key, label }) => (
+                                <DropdownMenuItem
+                                    key={key}
+                                    onClick={() => toggleMetric(key)}
+                                    className="gap-2 text-[13px]"
+                                >
+                                    <span>{label}</span>
+                                    {visibleMetrics.has(key) && <Check className="ml-auto h-3.5 w-3.5" />}
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    <span className="text-[11px] text-muted-foreground">
+                        {data.length} {sampleLabel}
+                    </span>
+                </div>
             </div>
 
-            {/* One panel per metric */}
             {metrics.length === 0 ? (
                 <p className="text-[12px] text-muted-foreground">No metrics configured.</p>
             ) : (
                 <div className="space-y-2">
-                    {metrics.map((meta) => (
-                        <MetricPanel
-                            key={meta.key}
-                            meta={meta}
-                            stats={statsMap[meta.key]}
-                            threshold={thresholds[meta.key] ?? meta.defaultThresholds}
-                            onThresholdChange={(type, value) =>
-                                onThresholdChange(meta.key, type, value)
-                            }
-                            onThresholdSave={(values) => onThresholdSave?.(meta.key, values)}
-                            onResetToDefault={() => onThresholdReset?.(meta.key)}
-                            saving={saving}
-                        />
-                    ))}
+                    {metrics
+                        .filter((metric) => visibleMetrics.has(metric.key))
+                        .map((meta) => (
+                            <MetricPanel
+                                key={meta.key}
+                                meta={meta}
+                                stats={statsMap[meta.key]}
+                                threshold={thresholds[meta.key] ?? meta.defaultThresholds}
+                                onThresholdChange={(type, value) => onThresholdChange(meta.key, type, value)}
+                                onThresholdSave={(values) => onThresholdSave?.(meta.key, values)}
+                                onResetToDefault={() => onThresholdReset?.(meta.key)}
+                                saving={saving}
+                            />
+                        ))}
                 </div>
             )}
         </section>

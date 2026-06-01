@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import type { DateRange } from 'react-day-picker';
 import {
     BarChart,
@@ -23,6 +23,9 @@ import {
     GRID_PROPS,
     filterByRange,
     downloadCSV,
+    PHASE_OPTIONS,
+    filterMetricsByPhase,
+    type PhaseKey,
 } from '@/components/dashboard/sensor-chart-shared';
 
 // ─── Thin down to N evenly-spaced bars so it stays readable ──────────────────
@@ -40,6 +43,8 @@ export function SensorBarChart({
     loading,
     error,
     height = 320,
+    phaseSelection: phaseSelectionProp,
+    onPhaseSelectionChange,
 }: BaseChartProps) {
     const chartRef = useRef<HTMLDivElement>(null);
     const [activeRange, setActiveRange] = useState<ChartRange>('realtime');
@@ -47,7 +52,26 @@ export function SensorBarChart({
     const [visibleSeries, setVisibleSeries] = useState<Set<string>>(
         new Set(metrics.map((m) => m.key))
     );
+    const [localPhaseSelection, setLocalPhaseSelection] = useState<Set<PhaseKey>>(
+        () => new Set(PHASE_OPTIONS.map((phase) => phase.key))
+    );
 
+    const phaseSelection = phaseSelectionProp ?? localPhaseSelection;
+    const updatePhaseSelection = useCallback(
+        (next: Set<PhaseKey>) => {
+            if (onPhaseSelectionChange) {
+                onPhaseSelectionChange(next);
+            } else {
+                setLocalPhaseSelection(next);
+            }
+        },
+        [onPhaseSelectionChange]
+    );
+
+    const phaseMetrics = useMemo(
+        () => filterMetricsByPhase(metrics, phaseSelection),
+        [metrics, phaseSelection]
+    );
     const filtered = sampleData(filterByRange(data, activeRange, customRange));
 
     const toggleSeries = useCallback((key: string) => {
@@ -59,6 +83,40 @@ export function SensorBarChart({
         });
     }, []);
 
+    useEffect(() => {
+        setVisibleSeries((prev) => {
+            const allowed = new Set(phaseMetrics.map((metric) => metric.key));
+            const next = new Set(prev);
+            let changed = false;
+
+            for (const key of next) {
+                if (!allowed.has(key)) {
+                    next.delete(key);
+                    changed = true;
+                }
+            }
+
+            for (const key of allowed) {
+                if (!next.has(key)) {
+                    next.add(key);
+                    changed = true;
+                }
+            }
+
+            return changed ? next : prev;
+        });
+    }, [phaseMetrics]);
+
+    const togglePhase = useCallback(
+        (phase: PhaseKey) => {
+            const next = new Set(phaseSelection);
+            if (next.size === 1 && next.has(phase)) return;
+            next.has(phase) ? next.delete(phase) : next.add(phase);
+            updatePhaseSelection(next);
+        },
+        [phaseSelection, updatePhaseSelection]
+    );
+
     const handleDownloadImage = useCallback(async () => {
         if (!chartRef.current) return;
         const { default: html2canvas } = await import('html2canvas');
@@ -69,7 +127,7 @@ export function SensorBarChart({
         a.click();
     }, [title]);
 
-    const visibleMetrics = metrics.filter((m) => visibleSeries.has(m.key));
+    const visibleMetrics = phaseMetrics.filter((m) => visibleSeries.has(m.key));
 
     return (
         <ChartShell
@@ -80,9 +138,11 @@ export function SensorBarChart({
             onRangeChange={setActiveRange}
             customRange={customRange}
             onCustomRangeChange={setCustomRange}
-            metrics={metrics}
+            metrics={phaseMetrics}
             visibleSeries={visibleSeries}
             onToggleSeries={toggleSeries}
+            phaseSelection={phaseSelection}
+            onTogglePhase={togglePhase}
             onDownloadCSV={() => downloadCSV(filtered, `${title}-bar.csv`)}
             onDownloadImage={handleDownloadImage}
             loading={loading}

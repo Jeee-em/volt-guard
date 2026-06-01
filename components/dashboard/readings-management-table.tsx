@@ -1,25 +1,27 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useDeferredValue, useMemo, useState } from 'react';
 import {
     AlertCircle,
     AlertTriangle,
-    Check,
     CheckCircle2,
     ChevronDown,
     ChevronLeft,
     ChevronRight,
     ChevronUp,
     ChevronsUpDown,
+    Download,
+    Edit2,
     Filter,
     MinusCircle,
-    Pencil,
     Plus,
-    Save,
     Search,
     Trash2,
     X,
 } from 'lucide-react';
+import { getDatabase, push, ref, remove, set, update } from 'firebase/database';
+import { app } from '@/lib/firebase';
+import { useSensorData, type PowerReading } from '@/hooks/use-sensor-data';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -41,31 +43,45 @@ import {
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
-    getMetricLabel,
     getMetricMeta,
-    getMetricUnit,
     getThresholdValue,
     isThresholdMetricKey,
     type SignalThreshold,
     type ThresholdConfig,
-    type ThresholdMetricKey,
 } from '@/lib/thresholds';
 
 export type ReadingLevel = 'critical' | 'warning' | 'normal' | 'no-signal';
-export type ReadingMetric = ThresholdMetricKey | 'power_factor';
-
-export interface ReadingRecord {
-    id: string;
-    metric: ReadingMetric;
-    value: number;
-    unit?: string;
-    recordedAt: string;
-}
 
 interface ReadingsManagementTableProps {
     thresholds?: ThresholdConfig;
     isSuperAdmin: boolean;
     deviceId?: string | null;
+}
+
+interface RawReadingDraft {
+    recordedAt: string;
+    p1_voltage: number;
+    p1_current: number;
+    p1_power: number;
+    p2_voltage: number;
+    p2_current: number;
+    p2_power: number;
+    p3_voltage: number;
+    p3_current: number;
+    p3_power: number;
+    total_power: number;
+}
+
+interface TableRow {
+    id: string;
+    recordedAt: string;
+    voltage: number;
+    current: number;
+    power: number;
+    level: ReadingLevel;
+    assessment: string;
+    threshold: SignalThreshold | null;
+    searchText: string;
 }
 
 const LEVEL_CFG: Record<ReadingLevel, { icon: React.ElementType; label: string; pill: string }> = {
@@ -91,45 +107,23 @@ const LEVEL_CFG: Record<ReadingLevel, { icon: React.ElementType; label: string; 
     },
 };
 
-const METRICS: ReadingMetric[] = ['voltage', 'current', 'power', 'power_loss', 'power_factor'];
 const PAGE_SIZES = [10, 25, 50];
 
-function getMetricLabelSafe(metric: ReadingMetric): string {
-    if (isThresholdMetricKey(metric)) return getMetricLabel(metric);
-    return metric === 'power_factor' ? 'Power Factor' : metric;
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : 'Please try again.';
 }
 
-function getMetricUnitSafe(metric: ReadingMetric): string {
-    if (isThresholdMetricKey(metric)) return getMetricUnit(metric);
-    return metric === 'power_factor' ? 'pf' : '';
+function average(values: Array<number | undefined>, ignoreZero = false): number {
+    const valid = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    if (valid.length === 0) return 0;
+    const sample = ignoreZero ? valid.filter((value) => Math.abs(value) > 1e-9) : valid;
+    const source = sample.length > 0 ? sample : valid;
+    return source.reduce((sum, value) => sum + value, 0) / source.length;
 }
 
-function resolveThreshold(metric: ReadingMetric, thresholds?: ThresholdConfig): SignalThreshold | null {
-    if (!isThresholdMetricKey(metric)) return null;
-    return {
-        warning: getThresholdValue(metric, 'warning', thresholds),
-        critical: getThresholdValue(metric, 'critical', thresholds),
-    };
-}
-
-function getLevel(value: number, threshold: SignalThreshold | null, metric: ReadingMetric): ReadingLevel {
-    if (isThresholdMetricKey(metric)) {
-        const meta = getMetricMeta(metric);
-        const zeroStatus = meta?.zeroStatus ?? 'no-signal';
-        if (value === 0 && zeroStatus === 'no-signal') return 'no-signal';
-    }
-    if (!threshold) return 'normal';
-    if (value >= threshold.critical) return 'critical';
-    if (value >= threshold.warning) return 'warning';
-    return 'normal';
-}
-
-function getAssessment(level: ReadingLevel, threshold: SignalThreshold | null): string {
-    if (!threshold) return 'No thresholds configured';
-    if (level === 'no-signal') return 'No signal detected';
-    if (level === 'critical') return 'Above critical threshold';
-    if (level === 'warning') return 'Above warning threshold';
-    return 'Within threshold';
+function toFinite(value: unknown): number {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
 }
 
 function formatDateTime(iso: string) {
@@ -144,42 +138,144 @@ function formatDateTime(iso: string) {
     });
 }
 
-function toDatetimeLocalValue(iso: string): string {
-    const d = new Date(iso);
-    if (!Number.isFinite(d.getTime())) return '';
-    const pad = (v: number) => String(v).padStart(2, '0');
-    const year = d.getFullYear();
-    const month = pad(d.getMonth() + 1);
-    const day = pad(d.getDate());
-    const hour = pad(d.getHours());
-    const minute = pad(d.getMinutes());
-    return `${year}-${month}-${day}T${hour}:${minute}`;
+function formatThresholds(threshold: SignalThreshold | null, unit: string): string {
+    if (!threshold) return '—';
+    return `${threshold.warning} / ${threshold.critical} ${unit}`;
 }
 
-function fromDatetimeLocalValue(value: string): string {
-    const ts = Date.parse(value);
-    return Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString();
+function resolveThreshold(metric: 'current', thresholds?: ThresholdConfig): SignalThreshold | null {
+    if (!isThresholdMetricKey(metric)) return null;
+    return {
+        warning: getThresholdValue(metric, 'warning', thresholds),
+        critical: getThresholdValue(metric, 'critical', thresholds),
+    };
 }
 
-function getErrorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : 'Please try again.';
+function getLevel(value: number, threshold: SignalThreshold | null): ReadingLevel {
+    if (!threshold) return 'normal';
+    if (value >= threshold.critical) return 'critical';
+    if (value >= threshold.warning) return 'warning';
+    return 'normal';
 }
 
-type SortKey = 'recordedAt' | 'level' | 'metric' | 'value';
+function getAssessment(level: ReadingLevel, threshold: SignalThreshold | null): string {
+    if (!threshold) return 'No thresholds configured';
+    if (level === 'no-signal') return 'No signal detected';
+    if (level === 'critical') return 'Above critical threshold';
+    if (level === 'warning') return 'Above warning threshold';
+    return 'Within threshold';
+}
 
-type TableRow = ReadingRecord & {
-    level: ReadingLevel;
-    assessment: string;
-    threshold: SignalThreshold | null;
-    unit: string;
-};
+function rawReadingToRow(id: string, reading: PowerReading, thresholds?: ThresholdConfig): TableRow {
+    const timestamp = Number(reading.timestamp);
+    const recordedAt = Number.isFinite(timestamp)
+        ? new Date(timestamp).toISOString()
+        : (Date.parse(reading.timestamp) ? new Date(Date.parse(reading.timestamp)).toISOString() : new Date().toISOString());
 
-function SortBtn({
-    col,
-    active,
-    dir,
-    onClick,
-}: { col: SortKey; active: boolean; dir: 'asc' | 'desc'; onClick: () => void }) {
+    const voltage = average([reading.p1_voltage, reading.p2_voltage, reading.p3_voltage], true);
+    const current = average([reading.p1_current, reading.p2_current, reading.p3_current], true);
+    const power = Number.isFinite(reading.total_power) ? reading.total_power : reading.p1_power + reading.p2_power + reading.p3_power;
+    const threshold = resolveThreshold('current', thresholds);
+    const level = getLevel(current, threshold);
+
+    const searchText = [
+        id,
+        formatDateTime(recordedAt),
+        String(voltage),
+        String(current),
+        String(power),
+        level,
+        getAssessment(level, threshold),
+    ].join(' ').toLowerCase();
+
+    return {
+        id,
+        recordedAt,
+        voltage,
+        current,
+        power,
+        threshold,
+        level,
+        assessment: getAssessment(level, threshold),
+        searchText,
+    };
+}
+
+function emptyDraft(): RawReadingDraft {
+    return {
+        recordedAt: new Date().toISOString(),
+        p1_voltage: 0,
+        p1_current: 0,
+        p1_power: 0,
+        p2_voltage: 0,
+        p2_current: 0,
+        p2_power: 0,
+        p3_voltage: 0,
+        p3_current: 0,
+        p3_power: 0,
+        total_power: 0,
+    };
+}
+
+function draftFromReading(reading: PowerReading): RawReadingDraft {
+    return {
+        recordedAt: reading.timestamp || new Date().toISOString(),
+        p1_voltage: reading.p1_voltage,
+        p1_current: reading.p1_current,
+        p1_power: reading.p1_power,
+        p2_voltage: reading.p2_voltage,
+        p2_current: reading.p2_current,
+        p2_power: reading.p2_power,
+        p3_voltage: reading.p3_voltage,
+        p3_current: reading.p3_current,
+        p3_power: reading.p3_power,
+        total_power: reading.total_power,
+    };
+}
+
+function draftToPayload(draft: RawReadingDraft) {
+    const recordedAt = new Date(draft.recordedAt);
+    const timestamp = recordedAt.toISOString();
+    return {
+        timestamp,
+        time: timestamp,
+        device_id: undefined,
+        p1_voltage: draft.p1_voltage,
+        p1_current: draft.p1_current,
+        p1_power: draft.p1_power,
+        p2_voltage: draft.p2_voltage,
+        p2_current: draft.p2_current,
+        p2_power: draft.p2_power,
+        p3_voltage: draft.p3_voltage,
+        p3_current: draft.p3_current,
+        p3_power: draft.p3_power,
+        total_power: draft.total_power,
+    };
+}
+
+type SortKey = 'recordedAt' | 'voltage' | 'current' | 'power';
+
+function downloadCSV(rows: TableRow[], filename = 'readings-management.csv') {
+    const headers = ['id', 'voltage', 'current', 'power', 'warningThreshold', 'criticalThreshold', 'recordedAt'];
+    const records = rows.map((row) => [
+        row.id,
+        row.voltage,
+        row.current,
+        row.power,
+        row.threshold?.warning ?? '',
+        row.threshold?.critical ?? '',
+        row.recordedAt,
+    ].join(','));
+    const blob = new Blob([[headers.join(','), ...records].join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+}
+
+function SortBtn({ active, dir, onClick }: { active: boolean; dir: 'asc' | 'desc'; onClick: () => void }) {
     const Icon = !active ? ChevronsUpDown : dir === 'asc' ? ChevronUp : ChevronDown;
     return (
         <button onClick={onClick} className="ml-1 inline-flex opacity-50 hover:opacity-100" type="button">
@@ -188,111 +284,69 @@ function SortBtn({
     );
 }
 
+function EditableField({
+    label,
+    value,
+    onChange,
+}: {
+    label: string;
+    value: number;
+    onChange: (next: number) => void;
+}) {
+    return (
+        <label className="space-y-1 text-[11px] text-muted-foreground">
+            <span className="block font-medium uppercase tracking-widest">{label}</span>
+            <Input
+                type="number"
+                step="0.01"
+                value={value}
+                onChange={(event) => onChange(toFinite(event.target.value))}
+                className="h-9 text-[13px]"
+            />
+        </label>
+    );
+}
+
 export function ReadingsManagementTable({ thresholds, isSuperAdmin, deviceId }: ReadingsManagementTableProps) {
-    const [records, setRecords] = useState<ReadingRecord[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const { data: sensorData, loading, error } = useSensorData(deviceId ?? undefined);
+    const db = useMemo(() => getDatabase(app), []);
+    const readingsById = useMemo(() => {
+        return new Map(sensorData.map((reading) => [reading.key, reading]));
+    }, [sensorData]);
 
     const [search, setSearch] = useState('');
-    const [levelFilter, setLevelFilter] = useState<ReadingLevel | 'all'>('all');
-    const [metricFilter, setMetricFilter] = useState<ReadingMetric | 'all'>('all');
+    const [/*levelFilter*/, /*setLevelFilter*/] = useState<ReadingLevel | 'all'>('all');
     const [sortKey, setSortKey] = useState<SortKey>('recordedAt');
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
-
-    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-    const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-    const [rowDeleteTarget, setRowDeleteTarget] = useState<ReadingRecord | null>(null);
-
-    const [showCreate, setShowCreate] = useState(false);
-    const [creating, setCreating] = useState(false);
+    const [draft, setDraft] = useState<RawReadingDraft>(emptyDraft());
     const [editingId, setEditingId] = useState<string | null>(null);
-    const [savingId, setSavingId] = useState<string | null>(null);
-
-    const [draft, setDraft] = useState<Omit<ReadingRecord, 'id'>>({
-        metric: 'power' as ReadingMetric,
-        value: 0,
-        unit: getMetricUnitSafe('power'),
-        recordedAt: new Date().toISOString(),
-    });
-
-    const loadRecords = useCallback(async () => {
-        if (!isSuperAdmin) {
-            setRecords([]);
-            setLoading(false);
-            return;
-        }
-        setLoading(true);
-        setError(null);
-        try {
-            const url = deviceId ? `/api/admin/readings?deviceId=${encodeURIComponent(deviceId)}` : '/api/admin/readings';
-            console.debug('[ReadingsManagementTable] loading records', { deviceId, url });
-            const response = await fetch(url, {
-                method: 'GET',
-                credentials: 'same-origin',
-            });
-            const raw = await response.text();
-            let payload: { records?: ReadingRecord[]; error?: string } | null = null;
-            try {
-                payload = raw ? JSON.parse(raw) : null;
-            } catch {
-                payload = null;
-            }
-            if (!response.ok) {
-                throw new Error(payload?.error || raw || 'Failed to load records.');
-            }
-            console.debug('[ReadingsManagementTable] loaded records', {
-                deviceId,
-                count: payload?.records?.length ?? 0,
-            });
-            setRecords(payload?.records ?? []);
-        } catch (err) {
-            setError(getErrorMessage(err));
-            setRecords([]);
-        } finally {
-            setLoading(false);
-        }
-    }, [deviceId, isSuperAdmin]);
-
-    useEffect(() => {
-        void loadRecords();
-    }, [loadRecords]);
+    const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+    const [formOpen, setFormOpen] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [actionError, setActionError] = useState<string | null>(null);
+    const deferredSearch = useDeferredValue(search);
 
     const rows = useMemo<TableRow[]>(() => {
-        return records.map((record) => {
-            const threshold = resolveThreshold(record.metric, thresholds);
-            const level = getLevel(record.value, threshold, record.metric);
-            const unit = record.unit ?? getMetricUnitSafe(record.metric);
-            return {
-                ...record,
-                unit,
-                threshold,
-                level,
-                assessment: getAssessment(level, threshold),
-            };
-        });
-    }, [records, thresholds]);
+        return sensorData.map((reading) => rawReadingToRow(reading.key, reading, thresholds));
+    }, [sensorData, thresholds]);
+
+    const metricSummary = useMemo(() => {
+        return {
+            critical: rows.filter((row) => row.level === 'critical').length,
+            warning: rows.filter((row) => row.level === 'warning').length,
+            noSignal: rows.filter((row) => row.level === 'no-signal').length,
+        };
+    }, [rows]);
 
     const filtered = useMemo(() => {
+        const query = deferredSearch.trim().toLowerCase();
         return rows.filter((row) => {
-            if (levelFilter !== 'all' && row.level !== levelFilter) return false;
-            if (metricFilter !== 'all' && row.metric !== metricFilter) return false;
-            if (search) {
-                const q = search.toLowerCase();
-                const haystack = [
-                    row.assessment,
-                    row.level,
-                    row.metric,
-                    getMetricLabelSafe(row.metric),
-                    String(row.value),
-                    row.recordedAt,
-                ].join(' ').toLowerCase();
-                if (!haystack.includes(q)) return false;
-            }
+            if (query && !row.searchText.includes(query)) return false;
             return true;
         });
-    }, [rows, levelFilter, metricFilter, search]);
+    }, [rows, deferredSearch]);
 
     const sorted = useMemo(() => {
         return [...filtered].sort((a, b) => {
@@ -302,16 +356,15 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin, deviceId }: 
             if (sortKey === 'recordedAt') {
                 av = Date.parse(a.recordedAt);
                 bv = Date.parse(b.recordedAt);
-            } else if (sortKey === 'level') {
-                const order: Record<ReadingLevel, number> = { critical: 0, warning: 1, 'no-signal': 2, normal: 3 };
-                av = order[a.level];
-                bv = order[b.level];
-            } else if (sortKey === 'metric') {
-                av = getMetricLabelSafe(a.metric);
-                bv = getMetricLabelSafe(b.metric);
-            } else if (sortKey === 'value') {
-                av = a.value;
-                bv = b.value;
+            } else if (sortKey === 'voltage') {
+                av = a.voltage;
+                bv = b.voltage;
+            } else if (sortKey === 'current') {
+                av = a.current;
+                bv = b.current;
+            } else if (sortKey === 'power') {
+                av = a.power;
+                bv = b.power;
             }
 
             if (av === bv) return 0;
@@ -323,138 +376,91 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin, deviceId }: 
     const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
     const safePage = Math.min(page, totalPages);
     const paginated = sorted.slice((safePage - 1) * pageSize, safePage * pageSize);
+    const hasFilters = search !== '';
 
-    const allPageSelected = paginated.length > 0 && paginated.every((row) => selectedIds.has(row.id));
+    const currentRefPath = useMemo(() => {
+        if (!deviceId) return null;
+        return `readings/${deviceId}`;
+    }, [deviceId]);
 
-    const handleSort = useCallback((col: SortKey) => {
-        setSortKey((prev) => {
-            if (prev === col) {
-                setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'));
-                return col;
-            }
-            setSortDir('desc');
-            return col;
-        });
+    const resetForm = useCallback(() => {
+        setDraft(emptyDraft());
+        setEditingId(null);
+        setFormOpen(false);
+        setActionError(null);
     }, []);
 
-    const handleCreate = useCallback(async () => {
-        setCreating(true);
+    const openCreate = useCallback(() => {
+        setDraft(emptyDraft());
+        setEditingId(null);
+        setFormOpen(true);
+        setActionError(null);
+    }, []);
+
+    const openEdit = useCallback((reading: PowerReading) => {
+        setDraft(draftFromReading(reading));
+        setEditingId(reading.key);
+        setFormOpen(true);
+        setActionError(null);
+    }, []);
+
+    const handleSave = useCallback(async () => {
+        if (!currentRefPath) {
+            setActionError('Select a device before saving readings.');
+            return;
+        }
+
+        setSaving(true);
+        setActionError(null);
         try {
-            const response = await fetch('/api/admin/readings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body: JSON.stringify(draft),
-            });
-            const raw = await response.text();
-            let payload: { error?: string } | null = null;
-            try {
-                payload = raw ? JSON.parse(raw) : null;
-            } catch {
-                payload = null;
+            const payload = draftToPayload(draft);
+            if (editingId) {
+                await update(ref(db, `${currentRefPath}/${editingId}`), payload);
+            } else {
+                const nextRef = push(ref(db, currentRefPath));
+                if (!nextRef.key) {
+                    throw new Error('Could not create a new reading key.');
+                }
+                await set(nextRef, payload);
             }
-            if (!response.ok) {
-                throw new Error(payload?.error || raw || 'Failed to create record.');
-            }
-            setShowCreate(false);
-            await loadRecords();
-        } catch (err) {
-            setError(getErrorMessage(err));
+            resetForm();
+        } catch (saveError) {
+            setActionError(getErrorMessage(saveError));
         } finally {
-            setCreating(false);
+            setSaving(false);
         }
-    }, [draft, loadRecords]);
+    }, [currentRefPath, db, draft, editingId, resetForm]);
 
-    const handleUpdate = useCallback(async (id: string, next: Omit<ReadingRecord, 'id'>) => {
-        setSavingId(id);
+    const handleDelete = useCallback(async () => {
+        if (!currentRefPath || !deleteTarget) return;
+        setSaving(true);
+        setActionError(null);
         try {
-            const response = await fetch(`/api/admin/readings/${id}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body: JSON.stringify(next),
-            });
-            const raw = await response.text();
-            let payload: { error?: string } | null = null;
-            try {
-                payload = raw ? JSON.parse(raw) : null;
-            } catch {
-                payload = null;
-            }
-            if (!response.ok) {
-                throw new Error(payload?.error || raw || 'Failed to update record.');
-            }
-            setEditingId(null);
-            await loadRecords();
-        } catch (err) {
-            setError(getErrorMessage(err));
+            await remove(ref(db, `${currentRefPath}/${deleteTarget}`));
+            setDeleteTarget(null);
+        } catch (deleteError) {
+            setActionError(getErrorMessage(deleteError));
         } finally {
-            setSavingId(null);
+            setSaving(false);
         }
-    }, [loadRecords]);
+    }, [currentRefPath, db, deleteTarget]);
 
-    const handleDelete = useCallback(async (id: string) => {
-        try {
-            const response = await fetch(`/api/admin/readings/${id}`, {
-                method: 'DELETE',
-                credentials: 'same-origin',
-            });
-            const raw = await response.text();
-            let payload: { error?: string } | null = null;
-            try {
-                payload = raw ? JSON.parse(raw) : null;
-            } catch {
-                payload = null;
-            }
-            if (!response.ok) {
-                throw new Error(payload?.error || raw || 'Failed to delete record.');
-            }
-            setSelectedIds((prev) => {
-                const next = new Set(prev);
-                next.delete(id);
-                return next;
-            });
-            setRowDeleteTarget(null);
-            await loadRecords();
-        } catch (err) {
-            setError(getErrorMessage(err));
-        }
-    }, [loadRecords]);
-
-    const handleBulkDelete = useCallback(async () => {
-        const ids = Array.from(selectedIds);
-        if (ids.length === 0) return;
-        try {
-            const response = await fetch('/api/admin/readings/bulk-delete', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body: JSON.stringify({ ids }),
-            });
-            const raw = await response.text();
-            let payload: { error?: string } | null = null;
-            try {
-                payload = raw ? JSON.parse(raw) : null;
-            } catch {
-                payload = null;
-            }
-            if (!response.ok) {
-                throw new Error(payload?.error || raw || 'Failed to delete selected records.');
-            }
-            setBulkDeleteOpen(false);
-            setSelectedIds(new Set());
-            await loadRecords();
-        } catch (err) {
-            setError(getErrorMessage(err));
-        }
-    }, [loadRecords, selectedIds]);
-
-    const clearFilters = () => {
-        setLevelFilter('all');
-        setMetricFilter('all');
+    const clearFilters = useCallback(() => {
         setSearch('');
         setPage(1);
-    };
+    }, []);
+
+    const handleSort = useCallback((nextKey: SortKey) => {
+        setSortKey((prev) => {
+            if (prev === nextKey) {
+                setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'));
+                return nextKey;
+            }
+            setSortDir('desc');
+            return nextKey;
+        });
+        setPage(1);
+    }, []);
 
     if (!isSuperAdmin) {
         return null;
@@ -464,15 +470,26 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin, deviceId }: 
         <section className="space-y-3">
             <div className="flex items-center gap-3">
                 <h2 className="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                    Readings Management
+                    Live Readings Management
                 </h2>
                 <div className="h-px flex-1 bg-border" />
-                <span className="text-[11px] text-muted-foreground">{records.length} total</span>
+                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <span>{metricSummary.critical} critical</span>
+                    <span>· {metricSummary.warning} warning</span>
+                    <span>· {metricSummary.noSignal} no signal</span>
+                    <span>· {rows.length} total</span>
+                </div>
             </div>
 
             {error && (
                 <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                    {error}
+                    {getErrorMessage(error)}
+                </div>
+            )}
+
+            {actionError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                    {actionError}
                 </div>
             )}
 
@@ -482,8 +499,8 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin, deviceId }: 
                         <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                         <Input
                             value={search}
-                            onChange={(e) => {
-                                setSearch(e.target.value);
+                            onChange={(event) => {
+                                setSearch(event.target.value);
                                 setPage(1);
                             }}
                             placeholder="Search readings..."
@@ -503,44 +520,9 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin, deviceId }: 
                     <div className="flex items-center gap-1.5">
                         <Filter className="h-3 w-3 text-muted-foreground" />
 
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <Button variant="outline" size="sm" className="h-8 gap-1 text-[12px]">
-                                    {levelFilter === 'all' ? 'Level' : LEVEL_CFG[levelFilter].label}
-                                    <ChevronDown className="h-3 w-3" />
-                                </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start">
-                                <DropdownMenuLabel className="text-[11px]">Level</DropdownMenuLabel>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem onClick={() => setLevelFilter('all')}>All</DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => setLevelFilter('critical')}>Critical</DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => setLevelFilter('warning')}>Warning</DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => setLevelFilter('no-signal')}>No Signal</DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => setLevelFilter('normal')}>Normal</DropdownMenuItem>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
+                        {/* level filter removed */}
 
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <Button variant="outline" size="sm" className="h-8 gap-1 text-[12px]">
-                                    {metricFilter === 'all' ? 'Metric' : getMetricLabelSafe(metricFilter)}
-                                    <ChevronDown className="h-3 w-3" />
-                                </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start">
-                                <DropdownMenuLabel className="text-[11px]">Metric</DropdownMenuLabel>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem onClick={() => setMetricFilter('all')}>All</DropdownMenuItem>
-                                {METRICS.map((metric) => (
-                                    <DropdownMenuItem key={metric} onClick={() => setMetricFilter(metric)}>
-                                        {getMetricLabelSafe(metric)}
-                                    </DropdownMenuItem>
-                                ))}
-                            </DropdownMenuContent>
-                        </DropdownMenu>
-
-                        {(levelFilter !== 'all' || metricFilter !== 'all' || search) && (
+                        {hasFilters && (
                             <button
                                 type="button"
                                 onClick={clearFilters}
@@ -554,7 +536,7 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin, deviceId }: 
 
                     <div className="flex-1" />
 
-                    <Button size="sm" onClick={() => setShowCreate((v) => !v)} className="gap-1.5 text-[12px]">
+                    <Button size="sm" onClick={openCreate} className="gap-1.5 text-[12px]">
                         <Plus className="h-3.5 w-3.5" />
                         Add reading
                     </Button>
@@ -562,97 +544,114 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin, deviceId }: 
                     <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setBulkDeleteOpen(true)}
-                        disabled={selectedIds.size === 0}
+                        onClick={() => downloadCSV(sorted)}
                         className="gap-1.5 text-[12px]"
                     >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Delete selected ({selectedIds.size})
+                        <Download className="h-3.5 w-3.5" />
+                        Export
                     </Button>
                 </div>
 
-                {showCreate && (
-                    <div className="grid grid-cols-1 gap-2 border-b border-border bg-muted/20 px-4 py-3 sm:grid-cols-4">
-                        <select
-                            value={draft.metric}
-                            onChange={(event) => {
-                                const metric = event.target.value as ReadingMetric;
-                                setDraft((prev) => ({ ...prev, metric, unit: getMetricUnitSafe(metric) }));
-                            }}
-                            className="h-9 rounded-md border border-border bg-background px-3 text-sm"
-                        >
-                            {METRICS.map((metric) => (
-                                <option key={metric} value={metric}>{getMetricLabelSafe(metric)}</option>
-                            ))}
-                        </select>
+                {formOpen && (
+                    <div className="border-b border-border bg-muted/20 px-4 py-4">
+                        <div className="mb-3 flex items-center justify-between gap-2">
+                            <p className="text-[12px] font-semibold uppercase tracking-widest text-muted-foreground">
+                                {editingId ? 'Edit reading' : 'Create reading'}
+                            </p>
+                            <button
+                                type="button"
+                                onClick={resetForm}
+                                className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                            >
+                                Close
+                            </button>
+                        </div>
 
-                        <Input
-                            type="number"
-                            step="0.01"
-                            value={draft.value}
-                            onChange={(event) => setDraft((prev) => ({ ...prev, value: Number(event.target.value) }))}
-                            className="h-9"
-                            placeholder="Value"
-                        />
+                        <div className="grid gap-4 lg:grid-cols-2">
+                            <label className="space-y-1 text-[11px] text-muted-foreground lg:col-span-2">
+                                <span className="block font-medium uppercase tracking-widest">Recorded At</span>
+                                <Input
+                                    type="datetime-local"
+                                    value={(() => {
+                                        const d = new Date(draft.recordedAt);
+                                        if (!Number.isFinite(d.getTime())) return '';
+                                        const pad = (v: number) => String(v).padStart(2, '0');
+                                        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                                    })()}
+                                    onChange={(event) => {
+                                        const ts = Date.parse(event.target.value);
+                                        setDraft((prev) => ({
+                                            ...prev,
+                                            recordedAt: Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString(),
+                                        }));
+                                    }}
+                                    className="h-9 text-[13px]"
+                                />
+                            </label>
 
-                        <Input
-                            type="datetime-local"
-                            value={toDatetimeLocalValue(draft.recordedAt)}
-                            onChange={(event) => setDraft((prev) => ({ ...prev, recordedAt: fromDatetimeLocalValue(event.target.value) }))}
-                            className="h-9"
-                        />
+                            <div className="space-y-2 rounded-lg border border-border bg-background p-3">
+                                <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Phase 1</p>
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                    <EditableField label="Voltage" value={draft.p1_voltage} onChange={(value) => setDraft((prev) => ({ ...prev, p1_voltage: value }))} />
+                                    <EditableField label="Current" value={draft.p1_current} onChange={(value) => setDraft((prev) => ({ ...prev, p1_current: value }))} />
+                                    <EditableField label="Power" value={draft.p1_power} onChange={(value) => setDraft((prev) => ({ ...prev, p1_power: value }))} />
+                                </div>
+                            </div>
 
-                        <div className="flex items-center justify-end gap-2">
-                            <Button variant="ghost" size="sm" onClick={() => setShowCreate(false)} disabled={creating}>
+                            <div className="space-y-2 rounded-lg border border-border bg-background p-3">
+                                <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Phase 2</p>
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                    <EditableField label="Voltage" value={draft.p2_voltage} onChange={(value) => setDraft((prev) => ({ ...prev, p2_voltage: value }))} />
+                                    <EditableField label="Current" value={draft.p2_current} onChange={(value) => setDraft((prev) => ({ ...prev, p2_current: value }))} />
+                                    <EditableField label="Power" value={draft.p2_power} onChange={(value) => setDraft((prev) => ({ ...prev, p2_power: value }))} />
+                                </div>
+                            </div>
+
+                            <div className="space-y-2 rounded-lg border border-border bg-background p-3">
+                                <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Phase 3</p>
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                    <EditableField label="Voltage" value={draft.p3_voltage} onChange={(value) => setDraft((prev) => ({ ...prev, p3_voltage: value }))} />
+                                    <EditableField label="Current" value={draft.p3_current} onChange={(value) => setDraft((prev) => ({ ...prev, p3_current: value }))} />
+                                    <EditableField label="Power" value={draft.p3_power} onChange={(value) => setDraft((prev) => ({ ...prev, p3_power: value }))} />
+                                </div>
+                            </div>
+
+                            <div className="space-y-2 rounded-lg border border-border bg-background p-3">
+                                <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Total</p>
+                                <EditableField label="Total Power" value={draft.total_power} onChange={(value) => setDraft((prev) => ({ ...prev, total_power: value }))} />
+                            </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-end gap-2">
+                            <Button variant="ghost" size="sm" onClick={resetForm} disabled={saving}>
                                 Cancel
                             </Button>
-                            <Button size="sm" onClick={handleCreate} disabled={creating} className="gap-1.5">
-                                {creating ? 'Saving...' : 'Create'}
+                            <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
+                                {saving ? 'Saving...' : 'Save'}
                             </Button>
                         </div>
                     </div>
                 )}
 
                 <div className="overflow-x-auto">
-                    <table className="w-full min-w-210 text-[12px]">
+                    <table className="w-full min-w-180 text-[12px]">
                         <thead>
                             <tr className="border-b border-border bg-muted/20">
-                                <th className="px-4 py-2.5 text-left">
-                                    <input
-                                        type="checkbox"
-                                        checked={allPageSelected}
-                                        onChange={(event) => {
-                                            const checked = event.target.checked;
-                                            setSelectedIds((prev) => {
-                                                const next = new Set(prev);
-                                                if (checked) {
-                                                    paginated.forEach((row) => next.add(row.id));
-                                                } else {
-                                                    paginated.forEach((row) => next.delete(row.id));
-                                                }
-                                                return next;
-                                            });
-                                        }}
-                                    />
-                                </th>
-                                <th className="px-4 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                                    Level
-                                    <SortBtn col="level" active={sortKey === 'level'} dir={sortDir} onClick={() => handleSort('level')} />
-                                </th>
-                                <th className="px-4 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                                    Metric
-                                    <SortBtn col="metric" active={sortKey === 'metric'} dir={sortDir} onClick={() => handleSort('metric')} />
-                                </th>
-                                <th className="px-4 py-2.5 text-right font-mono text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                                    Value
-                                    <SortBtn col="value" active={sortKey === 'value'} dir={sortDir} onClick={() => handleSort('value')} />
-                                </th>
-                                <th className="px-4 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                                    Assessment
-                                </th>
                                 <th className="px-4 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
                                     Recorded
-                                    <SortBtn col="recordedAt" active={sortKey === 'recordedAt'} dir={sortDir} onClick={() => handleSort('recordedAt')} />
+                                    <SortBtn active={sortKey === 'recordedAt'} dir={sortDir} onClick={() => handleSort('recordedAt')} />
+                                </th>
+                                <th className="px-4 py-2.5 text-right font-mono text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+                                    Voltage
+                                    <SortBtn active={sortKey === 'voltage'} dir={sortDir} onClick={() => handleSort('voltage')} />
+                                </th>
+                                <th className="px-4 py-2.5 text-right font-mono text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+                                    Current
+                                    <SortBtn active={sortKey === 'current'} dir={sortDir} onClick={() => handleSort('current')} />
+                                </th>
+                                <th className="px-4 py-2.5 text-right font-mono text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+                                    Power
+                                    <SortBtn active={sortKey === 'power'} dir={sortDir} onClick={() => handleSort('power')} />
                                 </th>
                                 <th className="px-4 py-2.5 text-right font-mono text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
                                     Actions
@@ -662,78 +661,56 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin, deviceId }: 
                         <tbody className="divide-y divide-border">
                             {loading ? (
                                 <tr>
-                                    <td colSpan={7} className="py-12 text-center text-[13px] text-muted-foreground">Loading readings...</td>
+                                    <td colSpan={5} className="py-12 text-center text-[13px] text-muted-foreground">
+                                        Loading live readings...
+                                    </td>
                                 </tr>
                             ) : paginated.length === 0 ? (
                                 <tr>
-                                    <td colSpan={7} className="py-12 text-center text-[13px] text-muted-foreground">No records found.</td>
+                                    <td colSpan={5} className="py-12 text-center text-[13px] text-muted-foreground">
+                                        {hasFilters ? 'No readings match the current filters.' : 'No readings yet.'}
+                                    </td>
                                 </tr>
                             ) : (
                                 paginated.map((row) => {
-                                    const level = LEVEL_CFG[row.level];
-                                    const LevelIcon = level.icon;
-                                    const isEditing = editingId === row.id;
-
-                                    if (isEditing) {
-                                        return (
-                                            <EditableRow
-                                                key={row.id}
-                                                row={row}
-                                                saving={savingId === row.id}
-                                                onCancel={() => setEditingId(null)}
-                                                onSave={(next) => handleUpdate(row.id, next)}
-                                                selected={selectedIds.has(row.id)}
-                                                onToggleSelect={(checked) => {
-                                                    setSelectedIds((prev) => {
-                                                        const next = new Set(prev);
-                                                        if (checked) next.add(row.id);
-                                                        else next.delete(row.id);
-                                                        return next;
-                                                    });
-                                                }}
-                                            />
-                                        );
-                                    }
-
                                     return (
                                         <tr key={row.id} className="transition-colors hover:bg-muted/20">
-                                            <td className="px-4 py-3">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedIds.has(row.id)}
-                                                    onChange={(event) => {
-                                                        const checked = event.target.checked;
-                                                        setSelectedIds((prev) => {
-                                                            const next = new Set(prev);
-                                                            if (checked) next.add(row.id);
-                                                            else next.delete(row.id);
-                                                            return next;
-                                                        });
-                                                    }}
-                                                />
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${level.pill}`}>
-                                                    <LevelIcon className="h-3 w-3" />
-                                                    {level.label}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-3 font-mono text-[12px] text-foreground">{getMetricLabelSafe(row.metric)}</td>
-                                            <td className="px-4 py-3 text-right font-mono font-medium text-foreground">{row.value.toFixed(2)} {row.unit}</td>
-                                            <td className="px-4 py-3 text-foreground">{row.assessment}</td>
+
                                             <td className="px-4 py-3">
                                                 <p className="font-mono text-[11px] text-foreground">{formatDateTime(row.recordedAt)}</p>
                                             </td>
+
+                                            <td className="px-4 py-3 text-right font-mono font-medium text-foreground">
+                                                {row.voltage.toFixed(2)} V
+                                            </td>
+
+                                            <td className="px-4 py-3 text-right font-mono font-medium text-foreground">
+                                                {row.current.toFixed(2)} A
+                                            </td>
+
+                                            <td className="px-4 py-3 text-right font-mono font-medium text-foreground">
+                                                {row.power.toFixed(2)} W
+                                            </td>
+
                                             <td className="px-4 py-3 text-right">
                                                 <div className="flex justify-end gap-1">
-                                                    <Button variant="ghost" size="icon-sm" onClick={() => setEditingId(row.id)}>
-                                                        <Pencil className="h-3.5 w-3.5" />
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon-sm"
+                                                        onClick={() => {
+                                                            const reading = readingsById.get(row.id);
+                                                            if (reading) openEdit(reading);
+                                                        }}
+                                                        title="Edit reading"
+                                                    >
+                                                        <Edit2 className="h-3.5 w-3.5" />
                                                     </Button>
                                                     <Button
                                                         variant="ghost"
                                                         size="icon-sm"
-                                                        onClick={() => setRowDeleteTarget(row)}
+                                                        onClick={() => setDeleteTarget(row.id)}
                                                         className="text-destructive hover:text-destructive"
+                                                        title="Delete reading"
                                                     >
                                                         <Trash2 className="h-3.5 w-3.5" />
                                                     </Button>
@@ -765,7 +742,9 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin, deviceId }: 
                                 ))}
                             </DropdownMenuContent>
                         </DropdownMenu>
-                        <span>{sorted.length === 0 ? '0' : `${(safePage - 1) * pageSize + 1}-${Math.min(safePage * pageSize, sorted.length)}`} of {sorted.length}</span>
+                        <span>
+                            {sorted.length === 0 ? '0' : `${(safePage - 1) * pageSize + 1}-${Math.min(safePage * pageSize, sorted.length)}`} of {sorted.length}
+                        </span>
                     </div>
 
                     <div className="flex items-center gap-1">
@@ -790,102 +769,20 @@ export function ReadingsManagementTable({ thresholds, isSuperAdmin, deviceId }: 
                 </div>
             </div>
 
-            <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>Delete selected readings?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            This will permanently remove {selectedIds.size} selected reading entries.
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={handleBulkDelete}>Delete selected</AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
-
-            <AlertDialog open={Boolean(rowDeleteTarget)} onOpenChange={(open) => !open && setRowDeleteTarget(null)}>
+            <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(null)}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
                         <AlertDialogTitle>Delete reading?</AlertDialogTitle>
                         <AlertDialogDescription>
-                            This will remove the selected reading record.
+                            This will permanently remove the selected reading from Firebase.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => rowDeleteTarget && handleDelete(rowDeleteTarget.id)}>Delete</AlertDialogAction>
+                        <AlertDialogAction onClick={handleDelete} disabled={saving}>Delete</AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
         </section>
-    );
-}
-
-function EditableRow({
-    row,
-    selected,
-    onToggleSelect,
-    onCancel,
-    onSave,
-    saving,
-}: {
-    row: TableRow;
-    selected: boolean;
-    onToggleSelect: (checked: boolean) => void;
-    onCancel: () => void;
-    onSave: (next: Omit<ReadingRecord, 'id'>) => void;
-    saving: boolean;
-}) {
-    const [metric, setMetric] = useState<ReadingMetric>(row.metric);
-    const [value, setValue] = useState<number>(row.value);
-    const [unit, setUnit] = useState<string>(row.unit || getMetricUnitSafe(row.metric));
-    const [recordedAt, setRecordedAt] = useState<string>(toDatetimeLocalValue(row.recordedAt));
-
-    return (
-        <tr className="bg-muted/20">
-            <td className="px-4 py-3">
-                <input type="checkbox" checked={selected} onChange={(event) => onToggleSelect(event.target.checked)} />
-            </td>
-            <td className="px-4 py-3" colSpan={2}>
-                <select
-                    value={metric}
-                    onChange={(event) => {
-                        const nextMetric = event.target.value as ReadingMetric;
-                        setMetric(nextMetric);
-                        setUnit(getMetricUnitSafe(nextMetric));
-                    }}
-                    className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
-                >
-                    {METRICS.map((option) => (
-                        <option key={option} value={option}>{getMetricLabelSafe(option)}</option>
-                    ))}
-                </select>
-            </td>
-            <td className="px-4 py-3">
-                <Input type="number" step="0.01" value={value} onChange={(event) => setValue(Number(event.target.value))} className="h-9" />
-            </td>
-            <td className="px-4 py-3">
-                <Input value={unit} onChange={(event) => setUnit(event.target.value)} className="h-9" />
-            </td>
-            <td className="px-4 py-3">
-                <Input type="datetime-local" value={recordedAt} onChange={(event) => setRecordedAt(event.target.value)} className="h-9" />
-            </td>
-            <td className="px-4 py-3 text-right">
-                <div className="flex justify-end gap-1">
-                    <Button variant="ghost" size="icon-sm" onClick={onCancel} disabled={saving}>
-                        <X className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                        size="icon-sm"
-                        onClick={() => onSave({ metric, value, unit, recordedAt: fromDatetimeLocalValue(recordedAt) })}
-                        disabled={saving}
-                    >
-                        {saving ? <Save className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
-                    </Button>
-                </div>
-            </td>
-        </tr>
     );
 }

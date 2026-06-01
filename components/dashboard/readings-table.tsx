@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useDeferredValue } from 'react';
 import {
     AlertCircle,
     AlertTriangle,
@@ -172,6 +172,7 @@ type TableRow = ReadingRecord & {
     assessment: string;
     threshold: SignalThreshold | null;
     unit: string;
+    searchText: string;
 };
 
 function downloadCSV(rows: TableRow[], filename = 'readings.csv') {
@@ -227,18 +228,31 @@ export function ReadingsTable({
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(defaultPageSize);
+    const deferredSearch = useDeferredValue(search);
 
     const rows = useMemo<TableRow[]>(() => {
         return records.map((record) => {
             const threshold = resolveThreshold(record.metric, thresholds);
             const level = getLevel(record.value, threshold, record.metric);
             const unit = record.unit ?? getMetricUnitSafe(record.metric);
+            const recordedAtLabel = formatDateTime(record.recordedAt);
+            const assessment = getAssessment(level, threshold);
             return {
                 ...record,
                 unit,
                 threshold,
                 level,
-                assessment: getAssessment(level, threshold),
+                assessment,
+                searchText: [
+                    record.id,
+                    getMetricLabelSafe(record.metric),
+                    level,
+                    unit,
+                    String(record.value),
+                    recordedAtLabel,
+                    formatSearchDate(record.recordedAt),
+                    assessment,
+                ].join(' ').toLowerCase(),
             };
         });
     }, [records, thresholds]);
@@ -262,25 +276,14 @@ export function ReadingsTable({
     }, []);
 
     const filtered = useMemo(() => {
+        const query = deferredSearch.trim().toLowerCase();
         return rows.filter((r) => {
             if (levelFilter !== 'all' && r.level !== levelFilter) return false;
             if (metricFilter !== 'all' && r.metric !== metricFilter) return false;
-            if (search) {
-                const q = search.toLowerCase();
-                const haystack = [
-                    r.assessment,
-                    getMetricLabelSafe(r.metric),
-                    r.level,
-                    r.unit,
-                    String(r.value),
-                    r.recordedAt,
-                    formatSearchDate(r.recordedAt),
-                ].join(' ').toLowerCase();
-                if (!haystack.includes(q)) return false;
-            }
+            if (query && !r.searchText.includes(query)) return false;
             return true;
         });
-    }, [rows, levelFilter, metricFilter, search]);
+    }, [rows, levelFilter, metricFilter, deferredSearch]);
 
     const sorted = useMemo(() => {
         return [...filtered].sort((a, b) => {

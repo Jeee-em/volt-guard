@@ -1,9 +1,8 @@
 'use client';
 
 import { Card } from '@/components/ui/card';
-import { LucideIcon, Zap, Activity } from 'lucide-react';
+import { Zap, Activity } from 'lucide-react';
 import { useAnalytics } from '@/hooks/use-analytics';
-import { PowerLossCard } from './power-loss-card';
 import { formatDistanceToNowStrict } from 'date-fns';
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -250,12 +249,6 @@ interface PowerMetricsGridProps {
     maxWatts?: number;
     maxVoltage?: number;
     maxCurrent?: number;
-    // Power loss props — required to show PowerLossCard
-    device1Id?: string;
-    device2Id?: string;
-    device3Id?: string;
-    bucketMs?: number;
-    skewWarnMs?: number;
 }
 
 /**
@@ -275,33 +268,15 @@ export function PowerMetricsGrid({
     deviceId,
     maxWatts = 3000,
     maxVoltage = 240,
-    maxCurrent = 16,
-    device1Id,
-    device2Id,
-    device3Id,
-    bucketMs,
-    skewWarnMs,
+    maxCurrent = 16
 }: PowerMetricsGridProps) {
-    const showPowerLoss = Boolean(device1Id && device2Id && device3Id);
 
     return (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-6">
-            {/* Row 1: Total Power + Power Loss side by side */}
-            <div className={showPowerLoss ? 'md:col-span-3' : 'md:col-span-6'}>
+            <div className= 'md:col-span-6'>
                 <TotalPowerCard deviceId={deviceId} maxWatts={maxWatts} />
             </div>
-            {showPowerLoss && (
-                <div className="md:col-span-3">
-                    <PowerLossCard
-                        device1Id={device1Id!}
-                        device2Id={device2Id!}
-                        device3Id={device3Id!}
-                        bucketMs={bucketMs}
-                        skewWarnMs={skewWarnMs}
-                    />
-                </div>
-            )}
-            {/* Row 2: Phase cards */}
+
             <div className="md:col-span-2">
                 <PhaseCard phase="p1" deviceId={deviceId} maxVoltage={maxVoltage} maxCurrent={maxCurrent} />
             </div>

@@ -1,6 +1,7 @@
 "use client"
 
 import { AppSidebar } from "@/components/app-sidebar"
+import { DashboardReadingsProvider } from "@/components/dashboard/dashboard-readings-context"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -46,35 +47,38 @@ const DashboardLayout = ({ children }: Readonly<{ children: React.ReactNode }>) 
   };
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
-      <SidebarInset className="flex flex-col min-h-screen w-full">
-        <header className="flex h-16 shrink-0 items-center justify-between gap-2 border-b px-4">
-          <div className="flex items-center gap-2">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-                  <BreadcrumbList>
-                    <BreadcrumbItem className="hidden md:block">
-                      <BreadcrumbLink href="#">
-                        <span className="text-muted-foreground">Dashboard</span>
-                      </BreadcrumbLink>
-                    </BreadcrumbItem>
-                    <BreadcrumbSeparator className="hidden md:block" />
-                    <BreadcrumbItem>
-                      <BreadcrumbPage>
-                        {getTitle(pathname)}
-                      </BreadcrumbPage>
-                    </BreadcrumbItem>
-                  </BreadcrumbList>
-                </Breadcrumb>
-              </div>
-            </header>
-            <main className="flex-1 overflow-hidden w-full">
-              {children}
-            </main>
-          </SidebarInset>
-        </SidebarProvider>
+    <DashboardReadingsProvider>
+      <SidebarProvider>
+        <AppSidebar />
+        <SidebarInset className="flex min-h-screen w-full flex-col">
+          <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b px-4">
+            <div className="flex items-center gap-2">
+              <SidebarTrigger className="-ml-1" />
+              <Separator orientation="vertical" className="mr-2 h-4" />
+              <Breadcrumb>
+                <BreadcrumbList>
+                  <BreadcrumbItem className="hidden md:block">
+                    <BreadcrumbLink href="#">
+                      <span className="text-muted-foreground">Dashboard</span>
+                    </BreadcrumbLink>
+                  </BreadcrumbItem>
+                  <BreadcrumbSeparator className="hidden md:block" />
+                  <BreadcrumbItem>
+                    <BreadcrumbPage>
+                      {getTitle(pathname)}
+                    </BreadcrumbPage>
+                  </BreadcrumbItem>
+                </BreadcrumbList>
+              </Breadcrumb>
+            </div>
+            
+          </header>
+          <main className="flex-1 overflow-hidden w-full">
+            {children}
+          </main>
+        </SidebarInset>
+      </SidebarProvider>
+    </DashboardReadingsProvider>
   )
 }
 

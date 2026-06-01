@@ -62,7 +62,14 @@ function getReadingTimestamp(reading: PowerReading): number {
 }
 
 function getMetricValue(metric: RuleMetric, reading: PowerReading): number | null {
-  const avg = (a: number, b: number, c: number) => (a + b + c) / 3;
+  const avg = (a: number, b: number, c: number) => {
+    const values = [a, b, c].filter((value) => Number.isFinite(value));
+    if (!values.length) return 0;
+    const nonZero = values.filter((value) => Math.abs(value) > 1e-9);
+    const source = nonZero.length ? nonZero : values;
+    return source.reduce((sum, value) => sum + value, 0) / source.length;
+  };
+
   if (metric === 'voltage') return avg(reading.p1_voltage, reading.p2_voltage, reading.p3_voltage);
   if (metric === 'current') return avg(reading.p1_current, reading.p2_current, reading.p3_current);
   if (metric === 'power') {

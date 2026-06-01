@@ -55,6 +55,7 @@ function buildBucketMap(readings: PowerReading[], bucketMs: number): Map<number,
  *   P1 loss = device1.p1_power − (device2.p1_power + device3.p1_power)
  *   P2 loss = device1.p2_power − (device2.p2_power + device3.p2_power)
  *   P3 loss = device1.p3_power − (device2.p3_power + device3.p3_power)
+ *   Total loss = device1.total_power − (device2.total_power + device3.total_power)
  *
  * Readings are matched by bucketing timestamps to the nearest `bucketMs` window.
  */
@@ -92,16 +93,23 @@ export function usePowerLoss(
                 Math.abs(Number(r3.timestamp) - bucket),
             );
 
+            const r1Total = Number.isFinite(r1.total_power)
+                ? r1.total_power
+                : r1.p1_power + r1.p2_power + r1.p3_power;
+            const r2Total = Number.isFinite(r2.total_power)
+                ? r2.total_power
+                : r2.p1_power + r2.p2_power + r2.p3_power;
+            const r3Total = Number.isFinite(r3.total_power)
+                ? r3.total_power
+                : r3.p1_power + r3.p2_power + r3.p3_power;
+
             result.push({
                 bucketTs: bucket,
                 skewMs,
                 p1_loss: r1.p1_power - (r2.p1_power + r3.p1_power),
                 p2_loss: r1.p2_power - (r2.p2_power + r3.p2_power),
                 p3_loss: r1.p3_power - (r2.p3_power + r3.p3_power),
-                total_loss:
-                    (r1.p1_power - (r2.p1_power + r3.p1_power)) +
-                    (r1.p2_power - (r2.p2_power + r3.p2_power)) +
-                    (r1.p3_power - (r2.p3_power + r3.p3_power)),
+                total_loss: r1Total - (r2Total + r3Total),
             });
         });
 

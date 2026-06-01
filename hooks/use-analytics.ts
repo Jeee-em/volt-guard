@@ -28,7 +28,7 @@ interface AnalyticsData {
     monthly: Record<string, PowerMetrics>;
 }
 
-export function useAnalytics(deviceId?: string, limit: number = 1000) {
+export function useAnalytics(deviceId?: string, limit?: number) {
     const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<Error | null>(null);

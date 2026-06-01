@@ -38,7 +38,7 @@ export interface PowerReading {
 
 export function useSensorData(
     deviceId?: string,
-    options: number | { limit?: number; startTime?: number | string } = 100
+    options: number | { limit?: number; startTime?: number | string } = {}
 ): {
     data: PowerReading[];
     loading: boolean;

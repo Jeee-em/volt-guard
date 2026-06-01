@@ -7,6 +7,16 @@ export interface ChartDataPoint {
     voltage?: number;
     current?: number;
     power?: number;
+    p1_voltage?: number;
+    p1_current?: number;
+    p1_power?: number;
+    p2_voltage?: number;
+    p2_current?: number;
+    p2_power?: number;
+    p3_voltage?: number;
+    p3_current?: number;
+    p3_power?: number;
+    total_power?: number;
     [key: string]: string | number | undefined;
 }
 
@@ -25,6 +35,8 @@ export interface BaseChartProps {
     loading?: boolean;
     error?: string | null;
     height?: number;
+    phaseSelection?: Set<PhaseKey>;
+    onPhaseSelectionChange?: (phases: Set<PhaseKey>) => void;
 }
 
 // ─── Shared time-range filter ─────────────────────────────────────────────────
@@ -39,6 +51,50 @@ export const CHART_RANGES: { value: ChartRange; label: string }[] = [
     { value: '30d', label: 'Last 30 Days' },
     { value: 'custom', label: 'Custom' },
 ];
+
+export type PhaseKey = 'p1' | 'p2' | 'p3';
+
+export type PhaseMetricBaseKey = 'voltage' | 'current' | 'power';
+
+export const PHASE_OPTIONS = [
+    { key: 'p1', label: 'Phase 1', shortLabel: 'P1' },
+    { key: 'p2', label: 'Phase 2', shortLabel: 'P2' },
+    { key: 'p3', label: 'Phase 3', shortLabel: 'P3' },
+] as const;
+
+const PHASE_METRIC_BASES: Array<{ key: PhaseMetricBaseKey; label: string; colors: string[] }> = [
+    { key: 'voltage', label: 'Voltage', colors: ['#2D7DD2', '#5AA1E3', '#8ABAEF'] },
+    { key: 'current', label: 'Current', colors: ['#B45309', '#D97706', '#F59E0B'] },
+    { key: 'power', label: 'Power', colors: ['#0F766E', '#14B8A6', '#2DD4BF'] },
+];
+
+export function buildPhaseMetricConfigs(): MetricConfig[] {
+    return PHASE_OPTIONS.flatMap((phase, phaseIndex) =>
+        PHASE_METRIC_BASES.map((metric) => ({
+            key: `${phase.key}_${metric.key}`,
+            label: `${phase.shortLabel} ${metric.label}`,
+            color: metric.colors[phaseIndex] ?? metric.colors[metric.colors.length - 1],
+        }))
+    );
+}
+
+export function getPhaseKeyFromMetric(metricKey: string): PhaseKey | null {
+    if (metricKey.startsWith('p1_')) return 'p1';
+    if (metricKey.startsWith('p2_')) return 'p2';
+    if (metricKey.startsWith('p3_')) return 'p3';
+    return null;
+}
+
+export function filterMetricsByPhase(
+    metrics: MetricConfig[],
+    phases?: Set<PhaseKey>
+): MetricConfig[] {
+    if (!phases || phases.size === 0) return metrics;
+    return metrics.filter((metric) => {
+        const phaseKey = getPhaseKeyFromMetric(metric.key);
+        return phaseKey ? phases.has(phaseKey) : false;
+    });
+}
 
 import type { DateRange } from 'react-day-picker';
 
@@ -109,6 +165,74 @@ export function filterByRange(
     });
 }
 
+function roundValue(value: number, decimals = 2) {
+    const factor = 10 ** decimals;
+    return Math.round(value * factor) / factor;
+}
+
+function sumValues(values: Array<number | undefined>) {
+    return values.reduce((total, value) => {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return total;
+        return total + value;
+    }, 0);
+}
+
+function averageValues(values: Array<number | undefined>, options?: { ignoreZero?: boolean }) {
+    const valid = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    if (valid.length === 0) return 0;
+    if (options?.ignoreZero) {
+        const nonZero = valid.filter((v) => Math.abs(v) > 1e-9);
+        if (nonZero.length > 0) {
+            return nonZero.reduce((sum, v) => sum + v, 0) / nonZero.length;
+        }
+    }
+    return valid.reduce((sum, v) => sum + v, 0) / valid.length;
+}
+
+function hasFinite(values: Array<number | undefined>) {
+    return values.some((v) => typeof v === 'number' && Number.isFinite(v));
+}
+
+export function applyPhaseSelection(
+    data: ChartDataPoint[],
+    phases?: Set<PhaseKey>
+): ChartDataPoint[] {
+    if (!phases || phases.size === 0 || phases.size === PHASE_OPTIONS.length) return data;
+    if (data.length === 0) return data;
+
+    const selected = PHASE_OPTIONS.filter((phase) => phases.has(phase.key)).map((phase) => phase.key);
+    if (selected.length === 0) return data;
+
+    return data.map((point) => {
+        const voltageValues = selected.map(
+            (phase) => point[`${phase}_voltage`] as number | undefined
+        );
+        const currentValues = selected.map(
+            (phase) => point[`${phase}_current`] as number | undefined
+        );
+        const powerValues = selected.map(
+            (phase) => point[`${phase}_power`] as number | undefined
+        );
+
+        const voltage = hasFinite(voltageValues)
+            ? roundValue(averageValues(voltageValues, { ignoreZero: true }), 2)
+            : point.voltage;
+        const current = hasFinite(currentValues)
+            ? roundValue(averageValues(currentValues, { ignoreZero: true }), 2)
+            : point.current;
+        const power = hasFinite(powerValues)
+            ? Math.round(sumValues(powerValues))
+            : point.power;
+
+        return {
+            ...point,
+            voltage,
+            current,
+            power,
+        };
+    });
+}
+
 // ─── CSV download ─────────────────────────────────────────────────────────────
 
 export function downloadCSV(data: ChartDataPoint[], filename: string) {
@@ -152,7 +276,7 @@ export function ChartTooltip({ active, payload, label }: any) {
 // Wraps the title, controls strip, and chart area in a consistent card frame.
 
 import { useState, type RefObject } from 'react';
-import { Download, ImageDown, Filter, ChevronDown, Check } from 'lucide-react';
+import { Download, ImageDown, Filter, ChevronDown, Check, Layers } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Button } from '@/components/ui/button';
@@ -174,6 +298,8 @@ interface ChartShellProps {
     metrics: MetricConfig[];
     visibleSeries: Set<string>;
     onToggleSeries: (key: string) => void;
+    phaseSelection?: Set<PhaseKey>;
+    onTogglePhase?: (phase: PhaseKey) => void;
     onDownloadCSV: () => void;
     onDownloadImage: () => void;
     loading?: boolean;
@@ -189,6 +315,13 @@ function formatRangeLabel(range?: DateRange): string {
     return `${fromLabel} - ${toLabel}`;
 }
 
+function formatPhaseLabel(phases: Set<PhaseKey>): string {
+    const selected = PHASE_OPTIONS.filter((phase) => phases.has(phase.key));
+    if (selected.length === 0) return 'Phases';
+    if (selected.length === PHASE_OPTIONS.length) return 'All';
+    return selected.map((phase) => phase.shortLabel).join(' + ');
+}
+
 export function ChartShell({
     title,
     description,
@@ -200,6 +333,8 @@ export function ChartShell({
     metrics,
     visibleSeries,
     onToggleSeries,
+    phaseSelection,
+    onTogglePhase,
     onDownloadCSV,
     onDownloadImage,
     loading,
@@ -211,6 +346,7 @@ export function ChartShell({
         activeRange === 'custom'
             ? formatRangeLabel(customRange)
             : CHART_RANGES.find((range) => range.value === activeRange)?.label ?? 'Range';
+    const phaseLabel = phaseSelection ? formatPhaseLabel(phaseSelection) : 'Phases';
 
     return (
         <div className="overflow-hidden rounded-xl border border-border bg-background shadow-sm">
@@ -277,6 +413,36 @@ export function ChartShell({
                             ))}
                         </DropdownMenuContent>
                     </DropdownMenu>
+
+                    {phaseSelection && onTogglePhase && (
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 gap-1.5 text-[11px]"
+                                >
+                                    <Layers className="h-3 w-3" />
+                                    <span className="truncate">Phases: {phaseLabel}</span>
+                                    <ChevronDown className="h-3 w-3" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start" className="w-40">
+                                {PHASE_OPTIONS.map(({ key, label }) => (
+                                    <DropdownMenuItem
+                                        key={key}
+                                        onClick={() => onTogglePhase(key)}
+                                        className="gap-2 text-[13px]"
+                                    >
+                                        {label}
+                                        {phaseSelection.has(key) && (
+                                            <Check className="ml-auto h-3.5 w-3.5" />
+                                        )}
+                                    </DropdownMenuItem>
+                                ))}
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    )}
 
                     {activeRange === 'custom' && onCustomRangeChange && (
                         <Popover open={customOpen} onOpenChange={setCustomOpen}>
