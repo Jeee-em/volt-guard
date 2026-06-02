@@ -1,127 +1,68 @@
 'use client';
 
 import { useMemo } from 'react';
-import { useSensorData, PowerReading } from './use-sensor-data';
+import { useSensorData } from './use-sensor-data';
 
-export interface PowerLossReading {
-    bucketTs: number;       // Bucketed timestamp (nearest minute)
-    skewMs: number;         // Max timestamp skew across the 3 devices for this bucket
-    p1_loss: number;        // Phase 1 loss in W
-    p2_loss: number;        // Phase 2 loss in W
-    p3_loss: number;        // Phase 3 loss in W
-    total_loss: number;     // Sum of all phase losses
-}
+export interface PowerLossData {
+    timestamp: number;
+    time: string;
+    
+    // Losses
+    p1_loss: number;
+    p2_loss: number;
+    p3_loss: number;
+    total_loss: number;
 
-interface UsePowerLossOptions {
-    /** Bucket size in milliseconds. Default: 60_000 (1 minute) */
-    bucketMs?: number;
-    /** How many readings to fetch per device */
-    limit?: number;
+    // Raw Device Data (for display)
+    transformer: { p1: number; p2: number; p3: number; total: number };
+    new_building: { p1: number; p2: number; p3: number; total: number };
+    old_building: { p1: number; p2: number; p3: number; total: number };
 }
 
 interface UsePowerLossResult {
-    losses: PowerLossReading[];
-    latest: PowerLossReading | null;
+    latest: PowerLossData | null;
     loading: boolean;
     error: Error | null;
 }
 
-/** Round a timestamp down to the nearest bucket boundary */
-function toBucket(ts: number, bucketMs: number): number {
-    return Math.floor(ts / bucketMs) * bucketMs;
-}
-
-function buildBucketMap(readings: PowerReading[], bucketMs: number): Map<number, PowerReading> {
-    const map = new Map<number, PowerReading>();
-    readings.forEach(r => {
-        const bucket = toBucket(Number(r.timestamp), bucketMs);
-        // Keep the reading closest to the bucket boundary
-        const existing = map.get(bucket);
-        if (!existing) {
-            map.set(bucket, r);
-        } else {
-            const existingDist = Math.abs(Number(existing.timestamp) - bucket);
-            const newDist = Math.abs(Number(r.timestamp) - bucket);
-            if (newDist < existingDist) map.set(bucket, r);
-        }
-    });
-    return map;
-}
-
-/**
- * Computes per-phase power loss across 3 power monitor devices.
- *
- * Formula:
- *   P1 loss = device1.p1_power − (device2.p1_power + device3.p1_power)
- *   P2 loss = device1.p2_power − (device2.p2_power + device3.p2_power)
- *   P3 loss = device1.p3_power − (device2.p3_power + device3.p3_power)
- *   Total loss = device1.total_power − (device2.total_power + device3.total_power)
- *
- * Readings are matched by bucketing timestamps to the nearest `bucketMs` window.
- */
 export function usePowerLoss(
     device1Id: string,
     device2Id: string,
-    device3Id: string,
-    { bucketMs = 60_000, limit = 200 }: UsePowerLossOptions = {}
+    device3Id: string
 ): UsePowerLossResult {
-    const { data: d1, loading: l1, error: e1 } = useSensorData(device1Id, limit);
-    const { data: d2, loading: l2, error: e2 } = useSensorData(device2Id, limit);
-    const { data: d3, loading: l3, error: e3 } = useSensorData(device3Id, limit);
+    // Fetch only the single latest reading for real-time computation
+    const { data: d1, loading: l1, error: e1 } = useSensorData(device1Id, { limit: 1 });
+    const { data: d2, loading: l2, error: e2 } = useSensorData(device2Id, { limit: 1 });
+    const { data: d3, loading: l3, error: e3 } = useSensorData(device3Id, { limit: 1 });
 
     const loading = l1 || l2 || l3;
     const error = e1 || e2 || e3;
 
-    const losses = useMemo<PowerLossReading[]>(() => {
-        if (loading || !d1.length || !d2.length || !d3.length) return [];
+    const latest = useMemo<PowerLossData | null>(() => {
+        if (loading || !d1.length || !d2.length || !d3.length) return null;
 
-        const map1 = buildBucketMap(d1, bucketMs);
-        const map2 = buildBucketMap(d2, bucketMs);
-        const map3 = buildBucketMap(d3, bucketMs);
+        const r1 = d1[0]; // Transformer
+        const r2 = d2[0]; // New Building
+        const r3 = d3[0]; // Old Building
 
-        const result: PowerLossReading[] = [];
+        const r1Total = Number.isFinite(r1.total_power) ? r1.total_power : r1.p1_power + r1.p2_power + r1.p3_power;
+        const r2Total = Number.isFinite(r2.total_power) ? r2.total_power : r2.p1_power + r2.p2_power + r2.p3_power;
+        const r3Total = Number.isFinite(r3.total_power) ? r3.total_power : r3.p1_power + r3.p2_power + r3.p3_power;
 
-        // Only compute loss for buckets where all 3 devices have data
-        map1.forEach((r1, bucket) => {
-            const r2 = map2.get(bucket);
-            const r3 = map3.get(bucket);
-            if (!r2 || !r3) return;
+        return {
+            timestamp: Math.max(Number(r1.timestamp), Number(r2.timestamp), Number(r3.timestamp)),
+            time: r1.time || new Date().toISOString(),
+            
+            p1_loss: r1.p1_power - (r2.p1_power + r3.p1_power),
+            p2_loss: r1.p2_power - (r2.p2_power + r3.p2_power),
+            p3_loss: r1.p3_power - (r2.p3_power + r3.p3_power),
+            total_loss: r1Total - (r2Total + r3Total),
 
-            const skewMs = Math.max(
-                Math.abs(Number(r1.timestamp) - bucket),
-                Math.abs(Number(r2.timestamp) - bucket),
-                Math.abs(Number(r3.timestamp) - bucket),
-            );
+            transformer: { p1: r1.p1_power, p2: r1.p2_power, p3: r1.p3_power, total: r1Total },
+            new_building: { p1: r2.p1_power, p2: r2.p2_power, p3: r2.p3_power, total: r2Total },
+            old_building: { p1: r3.p1_power, p2: r3.p2_power, p3: r3.p3_power, total: r3Total },
+        };
+    }, [d1, d2, d3, loading]);
 
-            const r1Total = Number.isFinite(r1.total_power)
-                ? r1.total_power
-                : r1.p1_power + r1.p2_power + r1.p3_power;
-            const r2Total = Number.isFinite(r2.total_power)
-                ? r2.total_power
-                : r2.p1_power + r2.p2_power + r2.p3_power;
-            const r3Total = Number.isFinite(r3.total_power)
-                ? r3.total_power
-                : r3.p1_power + r3.p2_power + r3.p3_power;
-
-            result.push({
-                bucketTs: bucket,
-                skewMs,
-                p1_loss: r1.p1_power - (r2.p1_power + r3.p1_power),
-                p2_loss: r1.p2_power - (r2.p2_power + r3.p2_power),
-                p3_loss: r1.p3_power - (r2.p3_power + r3.p3_power),
-                total_loss: r1Total - (r2Total + r3Total),
-            });
-        });
-
-        // Sort oldest → newest
-        result.sort((a, b) => a.bucketTs - b.bucketTs);
-        return result;
-    }, [d1, d2, d3, loading, bucketMs]);
-
-    return {
-        losses,
-        latest: losses.length ? losses[losses.length - 1] : null,
-        loading,
-        error,
-    };
+    return { latest, loading, error };
 }

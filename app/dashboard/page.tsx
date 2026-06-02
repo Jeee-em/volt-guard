@@ -19,12 +19,6 @@ export default function DashboardPage() {
     <div className="container mx-auto space-y-6 px-4 pb-8 pt-6 sm:px-6 lg:px-8">
       <PowerMetricsGrid
         deviceId={activeDeviceId}
-        device1Id="power_monitor_01"
-        device2Id="power_monitor_02"
-        device3Id="power_monitor_03"
-        maxWatts={3000}
-        maxVoltage={240}
-        maxCurrent={16}
       />
       <SensorChartGrid layout="1col" title="Live Sensor Signal">
         <SensorLineChart
@@ -32,7 +26,6 @@ export default function DashboardPage() {
           data={chartData}
           metrics={chartMetrics}
           loading={chartLoading}
-          error={chartError}
         />
       </SensorChartGrid>
     </div>

@@ -35,14 +35,19 @@ function formatTimeLabel(timestamp: number) {
 
 export function buildSensorChartData(
   readings: PowerReading[],
-  losses: PowerLossReading[],
+  losses: PowerLossReading[] = [], // Default to an empty array
   bucketMs: number
 ): ChartDataPoint[] {
   if (readings.length === 0) return [];
 
   const lossMap = new Map<number, number>();
-  losses.forEach((loss) => {
-    lossMap.set(loss.bucketTs, loss.total_loss);
+  
+  // Safely fallback to an empty array in case undefined is passed
+  (losses || []).forEach((loss) => {
+    // Handle the transition from bucketTs to timestamp
+    // We bucket the timestamp here so it maps correctly to the readings below
+    const ts = (loss as any).bucketTs ?? loss.timestamp;
+    lossMap.set(toBucket(ts, bucketMs), loss.total_loss);
   });
 
   const sorted = [...readings].sort(
