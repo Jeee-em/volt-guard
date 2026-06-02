@@ -19,7 +19,7 @@ interface PowerLossViewProps {
 }
 
 const POWER_LOSS_METRICS = [
-    { key: 'total_loss', color: 'hsl(var(--destructive))', label: 'Total Loss' },
+    { key: 'total_loss', color: '#ef4444', label: 'Total Loss' },
     { key: 'p1_loss', color: '#3b82f6', label: 'Phase 1 Loss' },
     { key: 'p2_loss', color: '#10b981', label: 'Phase 2 Loss' },
     { key: 'p3_loss', color: '#f59e0b', label: 'Phase 3 Loss' },
