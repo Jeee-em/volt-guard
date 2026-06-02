@@ -90,12 +90,6 @@ export default function AnalyticsPage() {
     <div className="container mx-auto p-6 space-y-8">
       <PowerMetricsGrid
         deviceId={activeDeviceId}
-        device1Id={DEFAULT_POWER_LOSS_DEVICE_IDS.device1Id}
-        device2Id={DEFAULT_POWER_LOSS_DEVICE_IDS.device2Id}
-        device3Id={DEFAULT_POWER_LOSS_DEVICE_IDS.device3Id}
-        maxWatts={3000}
-        maxVoltage={240}
-        maxCurrent={16}
       />
 
       <SensorChartGrid layout="1+2" title="Sensor Readings">

@@ -273,10 +273,6 @@ export function PowerMetricsGrid({
 
     return (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-6">
-            <div className= 'md:col-span-6'>
-                <TotalPowerCard deviceId={deviceId} maxWatts={maxWatts} />
-            </div>
-
             <div className="md:col-span-2">
                 <PhaseCard phase="p1" deviceId={deviceId} maxVoltage={maxVoltage} maxCurrent={maxCurrent} />
             </div>
