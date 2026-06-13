@@ -36,8 +36,8 @@ function LossValue({ value, large = false }: { value: number; large?: boolean })
             isLoss
                 ? 'text-destructive'
                 : value < 0
-                ? 'text-amber-500 dark:text-amber-400'
-                : 'text-emerald-500 dark:text-emerald-400'
+                    ? 'text-amber-500 dark:text-amber-400'
+                    : 'text-emerald-500 dark:text-emerald-400'
         )}>
             {isLoss ? '+' : ''}{fmt(value)}
             <span className="ml-0.5 text-[11px] font-normal opacity-60">W</span>
@@ -73,13 +73,6 @@ function MeterCard({ label, sublabel, icon, accentColor, accentBg, data, loading
                     <div>
                         <p className="text-sm font-semibold leading-none">{label}</p>
                         <p className="mt-0.5 text-[11px] text-muted-foreground">{sublabel}</p>
-                    </div>
-                    <div className="ml-auto flex items-center gap-1.5">
-                        <span className="relative flex h-2 w-2">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-                        </span>
-                        <span className="text-[10px] text-muted-foreground">live</span>
                     </div>
                 </div>
 
@@ -150,9 +143,14 @@ export function PowerLossView({ transformerId, newBuildingId, oldBuildingId }: P
 
     useEffect(() => {
         const isAdmin = userRole === 'super_admin' || userRole === 'admin';
-        if (!autoUpload || !isAdmin || !latest || latest.timestamp <= lastUploadedTs) return;
+        if (!autoUpload || !isAdmin || !latest) return;
+
+        // Enforce a minimum 30-second interval (30,000 ms) since the last upload
+        if (latest.timestamp - lastUploadedTs < 30000) return;
+
         const db = getDatabase(app);
         const newRef = push(ref(db, 'power_loss_history'));
+
         set(newRef, {
             timestamp: latest.timestamp,
             time: latest.time,
@@ -221,12 +219,12 @@ export function PowerLossView({ transformerId, newBuildingId, oldBuildingId }: P
                     <div className="hidden h-12 w-px bg-border sm:block" />
 
                     <div className="flex flex-1 flex-col gap-3">
-                        <PhaseLossRow label="Phase 1 (PT1)" value={latest?.p1_loss ?? 0} loading={loading} />
-                        <PhaseLossRow label="Phase 2 (PT2)" value={latest?.p2_loss ?? 0} loading={loading} />
-                        <PhaseLossRow label="Phase 3 (PT3)" value={latest?.p3_loss ?? 0} loading={loading} />
+                        <PhaseLossRow label="Phase 1 (PT1 - (PT1' + PT1''))" value={latest?.p1_loss ?? 0} loading={loading} />
+                        <PhaseLossRow label="Phase 2 (PT2 - (PT2' + PT2''))" value={latest?.p2_loss ?? 0} loading={loading} />
+                        <PhaseLossRow label="Phase 3 (PT3 - (PT3' + PT3''))" value={latest?.p3_loss ?? 0} loading={loading} />
                     </div>
 
-                    <div className="flex shrink-0 items-center gap-1.5 self-start rounded-lg bg-muted/50 px-2.5 py-1.5 sm:self-auto">
+                    {/* <div className="flex shrink-0 items-center gap-1.5 self-start rounded-lg bg-muted/50 px-2.5 py-1.5 sm:self-auto">
                         {latest
                             ? <Wifi className="h-3.5 w-3.5 text-emerald-500" />
                             : <WifiOff className="h-3.5 w-3.5 text-muted-foreground" />
@@ -234,7 +232,7 @@ export function PowerLossView({ transformerId, newBuildingId, oldBuildingId }: P
                         <span className="text-[11px] text-muted-foreground">
                             {latest ? 'Synced' : 'Awaiting sync'}
                         </span>
-                    </div>
+                    </div> */}
                 </div>
             </div>
 
@@ -270,7 +268,7 @@ export function PowerLossView({ transformerId, newBuildingId, oldBuildingId }: P
             </div>
 
             <div className="pt-2">
-                <SensorChart 
+                <SensorChart
                     title="Historical Power Loss (W)"
                     data={historyData}
                     metrics={POWER_LOSS_METRICS}

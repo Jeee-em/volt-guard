@@ -20,6 +20,10 @@ import { NotificationPreferences, NotificationPreferencesPanel } from '@/compone
 import { NotificationStatsItem, NotificationStatsStrip } from '@/components/dashboard/notification-stats-strip';
 import { getThresholdForSeverity } from '@/lib/thresholds';
 
+// Import Firebase Realtime DB hooks to read the computed loss values
+import { getDatabase, ref, query, limitToLast, onValue } from 'firebase/database';
+import { app } from '@/lib/firebase';
+
 function buildDefaultPrefs(email: string): NotificationPreferences {
   return {
     matrix: {
@@ -95,7 +99,11 @@ export default function NotificationsPage() {
   const { data: sensorData } = useSensorData();
   const { thresholds } = useThresholds(user?.uid);
 
+  // System-wide live computed power loss state
+  const [latestPowerLoss, setLatestPowerLoss] = useState<{ total_loss: number; timestamp: number } | null>(null);
+
   const currentThreshold = getThresholdForSeverity('current', 'critical', thresholds);
+  const powerLossThreshold = getThresholdForSeverity('power_loss', 'critical', thresholds);
 
   const defaultRules = useMemo<AlertRule[]>(() => [
     {
@@ -109,7 +117,18 @@ export default function NotificationsPage() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },
-  ], [currentThreshold]);
+    {
+      id: 'rule-power-loss-critical',
+      name: 'System Power Loss Alert',
+      metric: 'power_loss',
+      condition: 'above',
+      threshold: powerLossThreshold,
+      severity: 'critical',
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  ], [currentThreshold, powerLossThreshold]);
 
   const {
     rules,
@@ -122,10 +141,12 @@ export default function NotificationsPage() {
     duplicateRule,
     toggleRule,
   } = useAlertRules(user?.uid, defaultRules);
+
   const latestReading = useMemo(() => {
     if (!sensorData.length) return null;
     return sensorData[sensorData.length - 1];
   }, [sensorData]);
+
   const lastTriggeredRef = useRef<Record<string, boolean>>({});
   const [muteState, setMuteState] = useState<MuteState>({
     muted: false,
@@ -148,6 +169,27 @@ export default function NotificationsPage() {
 
   const [isSaving, setIsSaving] = useState(false);
   const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
+
+  // Realtime subscription hook to catch system-wide calculated losses
+  useEffect(() => {
+    const db = getDatabase(app);
+    const lossQuery = query(ref(db, 'power_loss_history'), limitToLast(1));
+    
+    const unsubscribe = onValue(lossQuery, (snapshot) => {
+      if (!snapshot.exists()) return;
+      snapshot.forEach((child) => {
+        const val = child.val();
+        if (val) {
+          setLatestPowerLoss({
+            total_loss: val.total_loss,
+            timestamp: val.timestamp
+          });
+        }
+      });
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -419,10 +461,10 @@ export default function NotificationsPage() {
     }
   }, [dismissNotification, toast]);
 
+  // Combined Alert Engine Processing Loop
   useEffect(() => {
-    if (!latestReading) return;
+    if (!latestReading && !latestPowerLoss) return;
 
-    const readingTs = getReadingTimestamp(latestReading);
     const triggeredState: Record<string, boolean> = { ...lastTriggeredRef.current };
     const newNotifications: Array<Omit<NotificationItem, 'id'> & { receivedAtMs?: number }> = [];
 
@@ -432,7 +474,20 @@ export default function NotificationsPage() {
         return;
       }
 
-      const value = getMetricValue(rule.metric, latestReading);
+      let value: number | null = null;
+      let readingTs = Date.now();
+
+      // Rule Metric Interceptor Routing
+      if (rule.metric === 'power_loss') {
+        if (!latestPowerLoss) return;
+        value = latestPowerLoss.total_loss;
+        readingTs = latestPowerLoss.timestamp;
+      } else {
+        if (!latestReading) return;
+        value = getMetricValue(rule.metric, latestReading);
+        readingTs = getReadingTimestamp(latestReading);
+      }
+
       if (value === null) {
         triggeredState[rule.id] = false;
         return;
@@ -464,7 +519,9 @@ export default function NotificationsPage() {
         ruleName: rule.name,
         ruleId: rule.id,
         receivedAt: new Date(readingTs).toISOString(),
-        analyticsHref: `/dashboard/analytics?t=${encodeURIComponent(new Date(readingTs).toISOString())}`,
+        analyticsHref: rule.metric === 'power_loss'
+          ? `/dashboard/power-loss`
+          : `/dashboard/analytics?t=${encodeURIComponent(new Date(readingTs).toISOString())}`,
         receivedAtMs: readingTs,
       });
     });
@@ -481,14 +538,13 @@ export default function NotificationsPage() {
         });
       });
     }
-  }, [addNotification, lastNotifiedByRule, latestReading, rules, toast]);
+  }, [addNotification, lastNotifiedByRule, latestReading, latestPowerLoss, rules, toast]);
 
   const statsItems: NotificationStatsItem[] = notifications.map((n) => ({
     id: n.id,
     severity: n.severity,
     status: n.status,
     receivedAt: n.receivedAt,
-    // resolvedAt: n.resolvedAt,   // optional
   }));
 
   const unreadCount = useMemo(
@@ -513,17 +569,6 @@ export default function NotificationsPage() {
 
   return (
     <div className='container mx-auto p-6 space-y-8'>
-      {/* <NotificationCenterHeader
-        unreadCount={unreadCount}
-        severityCounts={severityCounts}
-        muteState={muteState}
-        lastReceivedAt={lastReceivedAt}
-        onMarkAllRead={markAllRead}
-        onMute={handleMute}
-        onUnmute={handleUnmute}
-        onOpenSettings={() => console.log('open settings')}
-      /> */}
-
       <AlertRulesManager
         rules={rules}
         loading={rulesLoading}
@@ -564,8 +609,6 @@ export default function NotificationsPage() {
           isSaving={isSaving}
         />
       )}
-
-      {/* <NotificationStatsStrip notifications={statsItems} windowDays={7} /> */}
     </div>
   );
 }
