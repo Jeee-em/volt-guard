@@ -26,6 +26,7 @@ import {
     PHASE_OPTIONS,
     filterMetricsByPhase,
     type PhaseKey,
+    MetricConfig,
 } from '@/components/dashboard/sensor-chart-shared';
 
 // ─── Thin down to N evenly-spaced bars so it stays readable ──────────────────
@@ -33,6 +34,10 @@ function sampleData(data: any[], maxBars = 60) {
     if (data.length <= maxBars) return data;
     const step = Math.ceil(data.length / maxBars);
     return data.filter((_, i) => i % step === 0);
+}
+
+function excludePowerMetrics(metrics: MetricConfig[]): MetricConfig[] {
+    return metrics.filter((m) => !m.key.includes('_power') && m.key !== 'power');
 }
 
 export function SensorBarChart({
@@ -68,9 +73,11 @@ export function SensorBarChart({
         [onPhaseSelectionChange]
     );
 
+    const nonPowerMetrics = useMemo(() => excludePowerMetrics(metrics), [metrics]);
+
     const phaseMetrics = useMemo(
-        () => filterMetricsByPhase(metrics, phaseSelection),
-        [metrics, phaseSelection]
+        () => filterMetricsByPhase(nonPowerMetrics, phaseSelection),
+        [nonPowerMetrics, phaseSelection]
     );
     const filtered = sampleData(filterByRange(data, activeRange, customRange));
 

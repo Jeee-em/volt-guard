@@ -41,7 +41,7 @@ type NavItem = {
 
 const baseNavMain: NavItem[] = [
   {
-    title: "Power Loss",
+    title: "Power Distribution",
     url: "/dashboard/power-loss",
     icon: LayoutDashboard,
     isActive: true,

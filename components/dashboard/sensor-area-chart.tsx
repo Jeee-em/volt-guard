@@ -26,7 +26,12 @@ import {
     PHASE_OPTIONS,
     filterMetricsByPhase,
     type PhaseKey,
+    MetricConfig,
 } from '@/components/dashboard/sensor-chart-shared';
+
+function excludePowerMetrics(metrics: MetricConfig[]): MetricConfig[] {
+    return metrics.filter((m) => !m.key.includes('_power') && m.key !== 'power');
+}
 
 export function SensorAreaChart({
     title,
@@ -61,9 +66,11 @@ export function SensorAreaChart({
         [onPhaseSelectionChange]
     );
 
+    const nonPowerMetrics = useMemo(() => excludePowerMetrics(metrics), [metrics]);
+
     const phaseMetrics = useMemo(
-        () => filterMetricsByPhase(metrics, phaseSelection),
-        [metrics, phaseSelection]
+        () => filterMetricsByPhase(nonPowerMetrics, phaseSelection),
+        [nonPowerMetrics, phaseSelection]
     );
     const filtered = filterByRange(data, activeRange, customRange);
 

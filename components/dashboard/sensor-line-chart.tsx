@@ -26,7 +26,13 @@ import {
     PHASE_OPTIONS,
     filterMetricsByPhase,
     type PhaseKey,
+    type MetricConfig,
 } from '@/components/dashboard/sensor-chart-shared';
+
+/** Strip any metric whose key contains "_power" so power lines never render */
+function excludePowerMetrics(metrics: MetricConfig[]): MetricConfig[] {
+    return metrics.filter((m) => !m.key.includes('_power') && m.key !== 'power');
+}
 
 export function SensorLineChart({
     title,
@@ -42,8 +48,12 @@ export function SensorLineChart({
     const chartRef = useRef<HTMLDivElement>(null);
     const [activeRange, setActiveRange] = useState<ChartRange>('realtime');
     const [customRange, setCustomRange] = useState<DateRange | undefined>(undefined);
+
+    // Filter out power metrics before anything else
+    const nonPowerMetrics = useMemo(() => excludePowerMetrics(metrics), [metrics]);
+
     const [visibleSeries, setVisibleSeries] = useState<Set<string>>(
-        new Set(metrics.map((m) => m.key))
+        new Set(nonPowerMetrics.map((m) => m.key))
     );
     const [localPhaseSelection, setLocalPhaseSelection] = useState<Set<PhaseKey>>(
         () => new Set(PHASE_OPTIONS.map((phase) => phase.key))
@@ -62,9 +72,10 @@ export function SensorLineChart({
     );
 
     const phaseMetrics = useMemo(
-        () => filterMetricsByPhase(metrics, phaseSelection),
-        [metrics, phaseSelection]
+        () => filterMetricsByPhase(nonPowerMetrics, phaseSelection),
+        [nonPowerMetrics, phaseSelection]
     );
+
     const filtered = filterByRange(data, activeRange, customRange);
 
     const toggleSeries = useCallback((key: string) => {
@@ -76,26 +87,18 @@ export function SensorLineChart({
         });
     }, []);
 
+    // Sync visible series when phase/metric selection changes
     useEffect(() => {
         setVisibleSeries((prev) => {
-            const allowed = new Set(phaseMetrics.map((metric) => metric.key));
+            const allowed = new Set(phaseMetrics.map((m) => m.key));
             const next = new Set(prev);
             let changed = false;
-
             for (const key of next) {
-                if (!allowed.has(key)) {
-                    next.delete(key);
-                    changed = true;
-                }
+                if (!allowed.has(key)) { next.delete(key); changed = true; }
             }
-
             for (const key of allowed) {
-                if (!next.has(key)) {
-                    next.add(key);
-                    changed = true;
-                }
+                if (!next.has(key)) { next.add(key); changed = true; }
             }
-
             return changed ? next : prev;
         });
     }, [phaseMetrics]);
