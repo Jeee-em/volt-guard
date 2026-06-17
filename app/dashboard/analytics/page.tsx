@@ -27,12 +27,6 @@ import {
   type ThresholdMetricKey,
 } from "@/lib/thresholds";
 
-const DEFAULT_POWER_LOSS_DEVICE_IDS = {
-  device1Id: 'power_monitor_01',
-  device2Id: 'power_monitor_02',
-  device3Id: 'power_monitor_03',
-};
-
 export default function AnalyticsPage() {
   const { user } = useAuth();
   const { selectedDeviceId } = useDevice();

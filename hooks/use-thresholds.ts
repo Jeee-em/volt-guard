@@ -38,7 +38,10 @@ function mergeThresholds(data: unknown): ThresholdConfig {
     return next;
 }
 
-export function useThresholds(userId?: string | null): UseThresholdsResult {
+export function useThresholds(rawUserId?: any): UseThresholdsResult {
+    // DEFENSIVE FIX: Extract uid if a full user object was accidentally passed
+    const userId = typeof rawUserId === 'object' && rawUserId !== null ? rawUserId.uid : rawUserId;
+
     const [thresholds, setThresholds] = useState<ThresholdConfig>(() => getDefaultThresholds());
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -50,7 +53,8 @@ export function useThresholds(userId?: string | null): UseThresholdsResult {
     const db = useMemo(() => getDatabase(app), []);
 
     useEffect(() => {
-        if (!userId) {
+        // Guard against missing or invalid userId types
+        if (!userId || typeof userId !== 'string') {
             setThresholds(getDefaultThresholds());
             setLoading(false);
             return;
@@ -80,7 +84,7 @@ export function useThresholds(userId?: string | null): UseThresholdsResult {
 
     const saveThreshold = useCallback(
         async (metric: ThresholdMetricKey, values: SignalThreshold) => {
-            if (!userId) return;
+            if (!userId || typeof userId !== 'string') return;
             setSaving(true);
             setError(null);
             try {
@@ -102,7 +106,7 @@ export function useThresholds(userId?: string | null): UseThresholdsResult {
 
     const updateThreshold = useCallback(
         async (metric: ThresholdMetricKey, level: 'warning' | 'critical', value: number) => {
-            if (!userId) return;
+            if (!userId || typeof userId !== 'string') return;
             setSaving(true);
             setError(null);
             try {
@@ -121,7 +125,7 @@ export function useThresholds(userId?: string | null): UseThresholdsResult {
 
     const resetThreshold = useCallback(
         async (metric: ThresholdMetricKey) => {
-            if (!userId) return;
+            if (!userId || typeof userId !== 'string') return;
             setSaving(true);
             setError(null);
             try {

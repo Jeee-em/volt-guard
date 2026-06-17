@@ -1,5 +1,5 @@
 export type ThresholdLevel = 'warning' | 'critical';
-export type ThresholdMetricKey = 'voltage' | 'current' | 'power' | 'power_loss';
+export type ThresholdMetricKey = 'voltage' | 'current' | 'power' | 'power_loss' | 'power_distribution';
 export type ThresholdSeverity = 'critical' | 'warning' | 'info';
 
 export interface SignalThreshold {
@@ -13,7 +13,6 @@ export interface ThresholdMetricMeta {
     unit: string;
     color: string;
     defaultThresholds: SignalThreshold;
-    /** How to label zero values for this metric */
     zeroStatus?: 'normal' | 'no-signal';
 }
 
@@ -50,6 +49,15 @@ export const THRESHOLD_METRICS: ThresholdMetricMeta[] = [
         unit: 'W',
         color: '#B91C1C',
         defaultThresholds: { warning: 100, critical: 200 },
+        zeroStatus: 'normal',
+    },
+    {
+        key: 'power_distribution',
+        label: 'Power Distribution',
+        unit: 'W',
+        color: '#6366f1',
+        // warning = Unstable threshold, critical = Pilferage threshold
+        defaultThresholds: { warning: 0, critical: 10 },
         zeroStatus: 'normal',
     },
 ];
@@ -100,4 +108,22 @@ export function getThresholdForSeverity(
 ): number {
     const level: ThresholdLevel = severity === 'critical' ? 'critical' : 'warning';
     return getThresholdValue(metric, level, thresholds);
+}
+
+/**
+ * Derives power distribution remarks from a deviation value and the saved thresholds.
+ * warning  → Unstable  (deviation > warning)
+ * critical → Pilferage (deviation > critical)
+ */
+export type PowerDistributionRemarks = 'normal' | 'unstable' | 'pilferage';
+
+export function getPowerDistributionRemarks(
+    deviation: number,
+    thresholds: ThresholdConfig
+): PowerDistributionRemarks {
+    const abs = Math.abs(deviation);
+    const { warning, critical } = thresholds.power_distribution;
+    if (abs > critical)   return 'pilferage';
+    if (abs > warning)    return 'unstable';
+    return 'normal';
 }

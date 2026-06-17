@@ -2,20 +2,18 @@
 
 import { useMemo } from 'react';
 import { useWattage } from '@/hooks/use-wattage';
+import { useThresholds } from '@/hooks/use-thresholds';
+import { getPowerDistributionRemarks, type PowerDistributionRemarks } from '@/lib/thresholds';
 
-export type Remarks = 'normal' | 'unstable' | 'pilferage';
+export type Remarks = PowerDistributionRemarks;
 
 export interface PowerLossData {
     timestamp: number;
     time: string;
-
-    // Total wattage per device (Wab + Wbc)
-    pt: number;   // Transformer (measured)
-    pn: number;   // New Building
-    po: number;   // Old Building
-
-    // Deviation: PT_measured − (PN + PO)
-    deviation: number;
+    pt: number;         // Transformer total (Wab + Wbc)
+    pn: number;         // New Building total
+    po: number;         // Old Building total
+    deviation: number;  // PT_measured − (PN + PO)
     remarks: Remarks;
 }
 
@@ -25,21 +23,18 @@ interface UsePowerLossResult {
     error: Error | null;
 }
 
-function computeRemarks(deviation: number): Remarks {
-    const abs = Math.abs(deviation);
-    if (abs === 0)      return 'normal';
-    if (abs <= 10)      return 'unstable';
-    return 'pilferage';
-}
-
 export function usePowerLoss(
     transformerId: string,
     newBuildingId: string,
     oldBuildingId: string,
+    userId?: string,
 ): UsePowerLossResult {
     const { data: ptData, loading: l1, error: e1 } = useWattage(transformerId);
     const { data: pnData, loading: l2, error: e2 } = useWattage(newBuildingId);
     const { data: poData, loading: l3, error: e3 } = useWattage(oldBuildingId);
+
+    // Uses the same Firebase path as the rest of the app: user_thresholds/{userId}
+    const { thresholds } = useThresholds(userId);
 
     const loading = l1 || l2 || l3;
     const error = e1 || e2 || e3;
@@ -59,9 +54,9 @@ export function usePowerLoss(
             pn,
             po,
             deviation,
-            remarks: computeRemarks(deviation),
+            remarks: getPowerDistributionRemarks(deviation, thresholds),
         };
-    }, [ptData, pnData, poData, loading]);
+    }, [ptData, pnData, poData, loading, thresholds]);
 
     return { latest, loading, error };
 }
