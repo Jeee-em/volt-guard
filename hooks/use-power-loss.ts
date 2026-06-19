@@ -23,6 +23,12 @@ interface UsePowerLossResult {
     error: Error | null;
 }
 
+// ─── Helper: Clean Date Formatter ─────────────────────────────────────────────
+function formatSimpleTime(date: Date) {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 export function usePowerLoss(
     transformerId: string,
     newBuildingId: string,
@@ -49,7 +55,8 @@ export function usePowerLoss(
 
         return {
             timestamp: Math.max(ptData.timestamp ?? 0, pnData.timestamp ?? 0, poData.timestamp ?? 0),
-            time: new Date().toISOString(),
+            // Replaced .toISOString() with our clean formatter
+            time: formatSimpleTime(new Date()), 
             pt,
             pn,
             po,

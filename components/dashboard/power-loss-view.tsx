@@ -16,7 +16,8 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { usePowerLossHistory } from '@/hooks/use-power-loss-history';
 import { useToast } from '@/hooks/use-toast';
-import type { ThresholdConfig } from '@/lib/thresholds';
+import { PowerDistributionHistoryTable } from './power-distribution-history-table';
+import { usePowerDistributionHistory } from '@/hooks/use-power-distribution-history';
 
 interface PowerLossViewProps {
     transformerId: string;
@@ -396,8 +397,9 @@ export function PowerLossView({ transformerId, newBuildingId, oldBuildingId }: P
     const [userRole, setUserRole] = useState<string | null>(null);
     const [autoUpload, setAutoUpload] = useState(true);
     const [lastUploadedTs, setLastUploadedTs] = useState<number>(0);
+    const isInitialMount = useRef(true); // <-- Add this line
 
-    const { data: historyData, loading: historyLoading, error: historyError } = usePowerLossHistory(500);
+    const { data: historyData, loading: historyLoading, error: historyError } = usePowerDistributionHistory(500);
 
     useEffect(() => {
         if (!user) return;
@@ -410,6 +412,15 @@ export function PowerLossView({ transformerId, newBuildingId, oldBuildingId }: P
     useEffect(() => {
         const isAdmin = userRole === 'super_admin' || userRole === 'admin';
         if (!autoUpload || !isAdmin || !latest) return;
+
+        // 1. Catch the page refresh / initial load
+        if (isInitialMount.current) {
+            isInitialMount.current = false; // Mark that the initial load is done
+            setLastUploadedTs(latest.timestamp); // Sync the tracker so the 30s timer starts accurately
+            return; // Exit without uploading
+        }
+
+        // 2. Normal 30-second throttle check
         if (latest.timestamp - lastUploadedTs < 30000) return;
 
         const db = getDatabase(app);
@@ -426,11 +437,6 @@ export function PowerLossView({ transformerId, newBuildingId, oldBuildingId }: P
             .then(() => setLastUploadedTs(latest.timestamp))
             .catch(console.error);
 
-        // OLD: upload power loss to power_loss_history
-        // const oldRef = push(ref(db, 'power_loss_history'));
-        // set(oldRef, { timestamp, time, p1_loss, p2_loss, p3_loss, total_loss })
-        //     .then(() => setLastUploadedTs(latest.timestamp))
-        //     .catch(console.error);
     }, [latest, autoUpload, userRole, lastUploadedTs]);
 
     const isAdmin = userRole === 'super_admin' || userRole === 'admin';
@@ -459,13 +465,13 @@ export function PowerLossView({ transformerId, newBuildingId, oldBuildingId }: P
                         <span className="font-mono font-medium text-foreground">PT = PN + PO</span>
                     </p>
                 </div>
-                {/* {isAdmin && (
+                {isAdmin && (
                     <label className="flex cursor-pointer items-center gap-2 rounded-lg border bg-muted/40 px-2.5 py-1.5">
                         <CloudUpload className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="text-xs text-muted-foreground">Auto-upload</span>
                         <Switch checked={autoUpload} onCheckedChange={setAutoUpload} className="scale-75 origin-right" />
                     </label>
-                )} */}
+                )}
             </div>
 
             {/* Power Distribution hero card */}
@@ -497,6 +503,11 @@ export function PowerLossView({ transformerId, newBuildingId, oldBuildingId }: P
                 currentDeviation={latest?.deviation ?? 0}
                 remarks={remarks}
                 loading={loading}
+            />
+
+            <PowerDistributionHistoryTable
+                records={historyData}
+                loading={historyLoading}
             />
         </div>
     );
