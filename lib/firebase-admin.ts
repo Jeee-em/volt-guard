@@ -1,38 +1,24 @@
 import 'server-only';
 
 import admin from 'firebase-admin';
-import fs from 'fs';
-import path from 'path';
 
 let adminApp: admin.app.App | null = null;
 
 function loadServiceAccount(): admin.ServiceAccount {
-    // Prefer full JSON content in env (used by CI/GitHub Actions)
-    const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-    if (raw) {
-        try {
-            return JSON.parse(raw) as admin.ServiceAccount;
-        } catch (err) {
-            throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON is invalid JSON');
-        }
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+    if (!projectId || !clientEmail || !privateKey) {
+        throw new Error('Missing required Firebase Admin credentials in environment variables.');
     }
 
-    // Fallback to a filesystem path for local development
-    const jsonPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
-    if (jsonPath) {
-        const resolved = path.isAbsolute(jsonPath) ? jsonPath : path.resolve(process.cwd(), jsonPath);
-        if (!fs.existsSync(resolved)) {
-            throw new Error(`FIREBASE_SERVICE_ACCOUNT_PATH does not exist: ${resolved}`);
-        }
-        const content = fs.readFileSync(resolved, { encoding: 'utf8' });
-        try {
-            return JSON.parse(content) as admin.ServiceAccount;
-        } catch (err) {
-            throw new Error('File at FIREBASE_SERVICE_ACCOUNT_PATH is not valid JSON');
-        }
-    }
-
-    throw new Error('Neither FIREBASE_SERVICE_ACCOUNT_JSON nor FIREBASE_SERVICE_ACCOUNT_PATH is set');
+    return {
+        projectId,
+        clientEmail,
+        // Safely parse literal '\n' strings back into actual newlines for the RSA key
+        privateKey: privateKey.replace(/\\n/g, '\n'),
+    };
 }
 
 export function getAdminApp(): admin.app.App {
@@ -40,9 +26,11 @@ export function getAdminApp(): admin.app.App {
 
     if (!admin.apps.length) {
         const databaseURL = process.env.FIREBASE_DATABASE_URL;
+        
         if (!databaseURL) {
             throw new Error('FIREBASE_DATABASE_URL is not set');
         }
+
         admin.initializeApp({
             credential: admin.credential.cert(loadServiceAccount()),
             databaseURL,
