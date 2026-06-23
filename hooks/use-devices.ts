@@ -16,6 +16,7 @@ import {
     limitToLast,
 } from 'firebase/database';
 import { app } from '../lib/firebase';
+import { useAuth } from '@/context/AuthContext'; // Import useAuth to track login event
 
 export interface Device {
     deviceId: string;
@@ -39,11 +40,20 @@ export function useDevices(): {
     updateDevice: (deviceId: string, updates: Partial<Device>) => Promise<void>;
     deleteDevice: (deviceId: string) => Promise<void>;
 } {
+    const { user } = useAuth(); // Track authentication status
     const [devices, setDevices] = useState<Device[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<Error | null>(null);
 
     useEffect(() => {
+        // Defensive Guard: If the user hasn't completed log-in, stop immediately.
+        // This prevents Firebase from flagging a "Permission Denied" error on layout mount.
+        if (!user) {
+            setDevices([]);
+            setLoading(false);
+            return;
+        }
+
         const db = getDatabase(app);
         const devicesRef = ref(db, 'devices');
 
@@ -154,6 +164,7 @@ export function useDevices(): {
             }
         };
 
+        setLoading(true);
         const unsubscribe = onValue(devicesRef, handleValue, (err) => {
             setError(err);
             setLoading(false);
@@ -163,7 +174,7 @@ export function useDevices(): {
             off(devicesRef, 'value', handleValue);
             unsubscribe();
         };
-    }, []);
+    }, [user]); // Binding to the `user` dependency re-runs the listener automatically upon login
 
     const addDevice = async (device: Omit<Device, 'createdAt' | 'updatedAt'>) => {
         const db = getDatabase(app);
