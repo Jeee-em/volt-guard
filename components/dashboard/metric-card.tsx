@@ -221,10 +221,25 @@ interface DeviceTotalPowerCardProps {
     fullNameOverride?: string;
 }
 
+// ─── Device Total Power Card (PO / PN / PT) ───────────────────────────────────
+
+interface DeviceTotalPowerCardProps {
+    deviceId?: string;
+    maxWatts?: number;
+    fullNameOverride?: string;
+}
+
 const LABEL_ACCENT: Record<string, { color: string; bg: string; text: string }> = {
-    PT: { color: 'bg-indigo-500',  bg: 'bg-indigo-100 dark:bg-indigo-900/40',  text: 'text-indigo-600 dark:text-indigo-400' },
+    PT: { color: 'bg-indigo-500', bg: 'bg-indigo-100 dark:bg-indigo-900/40', text: 'text-indigo-600 dark:text-indigo-400' },
     PN: { color: 'bg-emerald-500', bg: 'bg-emerald-100 dark:bg-emerald-900/40', text: 'text-emerald-600 dark:text-emerald-400' },
-    PO: { color: 'bg-amber-500',   bg: 'bg-amber-100 dark:bg-amber-900/40',    text: 'text-amber-600 dark:text-amber-400' },
+    PO: { color: 'bg-amber-500', bg: 'bg-amber-100 dark:bg-amber-900/40', text: 'text-amber-600 dark:text-amber-400' },
+};
+
+// Map your specific Firebase device IDs to their proper labels and names
+const DEVICE_MAPPING: Record<string, { label: string; name: string }> = {
+    'power_monitor_01': { label: 'PT', name: 'Transformer' },
+    'power_monitor_02': { label: 'PN', name: 'New Building' },
+    'power_monitor_03': { label: 'PO', name: 'Old Building' },
 };
 
 export function DeviceTotalPowerCard({ deviceId, maxWatts = 5000, fullNameOverride }: DeviceTotalPowerCardProps) {
@@ -236,15 +251,19 @@ export function DeviceTotalPowerCard({ deviceId, maxWatts = 5000, fullNameOverri
     const Wab = latest?.Wab ?? 0;
     const Wbc = latest?.Wbc ?? 0;
 
-    // Infer label from deviceId (e.g. if deviceId is "device_PO_1", label is PO)
-    let label = 'PO';
-    if (deviceId) {
+    // 🟢 FIXED: Lookup the device details from the map, fallback to PO
+    const deviceInfo = deviceId ? DEVICE_MAPPING[deviceId] : null;
+
+    let label = deviceInfo?.label ?? 'PO';
+
+    // Safety fallback just in case you use custom string IDs later
+    if (!deviceInfo && deviceId) {
         if (deviceId.toUpperCase().includes('PT')) label = 'PT';
         else if (deviceId.toUpperCase().includes('PN')) label = 'PN';
     }
-    
-    const fullName = fullNameOverride ?? 'Old Building'; 
-    const accent = LABEL_ACCENT[label] || LABEL_ACCENT['PO']; 
+
+    const fullName = fullNameOverride ?? deviceInfo?.name ?? 'Old Building';
+    const accent = LABEL_ACCENT[label] || LABEL_ACCENT['PO'];
     const rangePercent = (total / maxWatts) * 100;
 
     const lastUpdated = latest?.timestamp
