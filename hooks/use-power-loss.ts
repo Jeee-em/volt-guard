@@ -10,9 +10,9 @@ export type Remarks = PowerDistributionRemarks;
 export interface PowerLossData {
     timestamp: number;
     time: string;
-    pt: number;         // Transformer total (Wab + Wbc)
-    pn: number;         // New Building total
-    po: number;         // Old Building total
+    pt: number;         // Transformer total (twm_total_power)
+    pn: number;         // New Building total (twm_total_power)
+    po: number;         // Old Building total (twm_total_power)
     deviation: number;  // PT_measured − (PN + PO)
     remarks: Remarks;
 }
@@ -39,7 +39,6 @@ export function usePowerLoss(
     const { data: pnData, loading: l2, error: e2 } = useWattage(newBuildingId);
     const { data: poData, loading: l3, error: e3 } = useWattage(oldBuildingId);
 
-    // Uses the same Firebase path as the rest of the app: user_thresholds/{userId}
     const { thresholds } = useThresholds(userId);
 
     const loading = l1 || l2 || l3;
@@ -48,6 +47,7 @@ export function usePowerLoss(
     const latest = useMemo<PowerLossData | null>(() => {
         if (loading || !ptData || !pnData || !poData) return null;
 
+        // Use the newly mapped total from useWattage (which represents twm_total_power)
         const pt = ptData.total;
         const pn = pnData.total;
         const po = poData.total;
@@ -55,7 +55,6 @@ export function usePowerLoss(
 
         return {
             timestamp: Math.max(ptData.timestamp ?? 0, pnData.timestamp ?? 0, poData.timestamp ?? 0),
-            // Replaced .toISOString() with our clean formatter
             time: formatSimpleTime(new Date()), 
             pt,
             pn,

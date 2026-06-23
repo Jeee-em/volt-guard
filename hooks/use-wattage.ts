@@ -27,12 +27,17 @@ export function getDeviceFullName(label: DeviceLabel): string {
 }
 
 export interface WattageData {
-    wab: number;       // Phase 1: voltage1 × current1
-    wbc: number;       // Phase 2: voltage2 × current2
-    total: number;     // total = Wab + Wbc
+    wab: number;       // Direct from DB
+    wbc: number;       // Direct from DB
+    total: number;     // Direct from twm_total_power
     label: DeviceLabel;
     fullName: string;
     // Raw inputs for display
+    Vab: number;
+    Ia: number;
+    Vbc: number;
+    Ic: number;
+    // Legacy fallbacks to prevent crashes
     v1: number;
     i1: number;
     v2: number;
@@ -53,25 +58,34 @@ export function useWattage(deviceId?: string): UseWattageResult {
         const latest = analytics?.latestSingle;
         if (!latest) return null;
 
-        const v1 = (latest as any)?.p1_voltage ?? 0;
-        const i1 = (latest as any)?.p1_current ?? 0;
-        const v2 = (latest as any)?.p2_voltage ?? 0;
-        const i2 = (latest as any)?.p2_current ?? 0;
+        // Map safely to the new two-wattmeter metrics
+        const Vab = latest.Vab ?? (latest as any).p1_voltage ?? 0;
+        const Ia = latest.Ia ?? (latest as any).p1_current ?? 0;
+        const Vbc = latest.Vbc ?? (latest as any).p2_voltage ?? 0;
+        const Ic = latest.Ic ?? (latest as any).p2_current ?? 0;
 
-        const wab = v1 * i1;
-        const wbc = v2 * i2;
+        // Pull direct powers from the DB, fallback to manual math if legacy data
+        const wab = latest.Wab !== undefined ? latest.Wab : (Vab * Ia);
+        const wbc = latest.Wbc !== undefined ? latest.Wbc : (Vbc * Ic);
+        const total = latest.twm_total_power !== undefined ? latest.twm_total_power : (wab + wbc);
+        
         const label = getDeviceLabel(deviceId);
 
         return {
             wab,
             wbc,
-            total: wab + wbc,
+            total,
             label,
             fullName: getDeviceFullName(label),
-            v1,
-            i1,
-            v2,
-            i2,
+            Vab,
+            Ia,
+            Vbc,
+            Ic,
+            // Keep legacy keys populated so you don't have to refactor everything immediately
+            v1: Vab,
+            i1: Ia,
+            v2: Vbc,
+            i2: Ic,
             timestamp: latest.timestamp,
         };
     }, [analytics, deviceId]);

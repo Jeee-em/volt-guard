@@ -3,7 +3,6 @@
 import { Card } from '@/components/ui/card';
 import { Zap, Activity, Sigma } from 'lucide-react';
 import { useAnalytics } from '@/hooks/use-analytics';
-import { useWattage } from '@/hooks/use-wattage';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -50,9 +49,16 @@ interface PhaseCardProps {
 }
 
 const PHASE_LABELS: Record<PhaseKey, string> = {
-    p1: 'Phase 1',
-    p2: 'Phase 2',
-    p3: 'Phase 3',
+    p1: 'Phase 1 (Vab / Ia)',
+    p2: 'Phase 2 (Vbc / Ib)',
+    p3: 'Phase 3 (Vca / Ic)',
+};
+
+// Map the old phase keys to the new data schema properties
+const METRIC_MAP: Record<PhaseKey, { v: string; i: string }> = {
+    p1: { v: 'Vab', i: 'Ia' },
+    p2: { v: 'Vbc', i: 'Ib' },
+    p3: { v: 'Vca', i: 'Ic' },
 };
 
 export function PhaseCard({ phase, maxVoltage = 240, maxCurrent = 16, deviceId, className }: PhaseCardProps) {
@@ -61,9 +67,12 @@ export function PhaseCard({ phase, maxVoltage = 240, maxCurrent = 16, deviceId, 
     const latest = data?.latestSingle;
     const prev = data?.latest?.[data.latest.length - 2];
 
-    const voltage = (latest as any)?.[`${phase}_voltage`] ?? 0;
-    const current = (latest as any)?.[`${phase}_current`] ?? 0;
-    const prevVoltage = (prev as any)?.[`${phase}_voltage`] ?? 0;
+    const vKey = METRIC_MAP[phase].v;
+    const iKey = METRIC_MAP[phase].i;
+
+    const voltage = (latest as any)?.[vKey] ?? 0;
+    const current = (latest as any)?.[iKey] ?? 0;
+    const prevVoltage = (prev as any)?.[vKey] ?? 0;
 
     const deltaV = voltage - prevVoltage;
     const deltaStr = deltaV === 0 ? undefined : `${deltaV > 0 ? '↑' : '↓'} ${Math.abs(deltaV).toFixed(1)} V`;
@@ -128,10 +137,18 @@ interface WattageCardProps {
 }
 
 export function WattageCard({ deviceId }: WattageCardProps) {
-    const { data, loading } = useWattage(deviceId);
+    const { data: analytics, loading } = useAnalytics(deviceId, 1);
+    const latest = analytics?.latestSingle;
 
-    const lastUpdated = data?.timestamp
-        ? `Updated ${formatDistanceToNowStrict(data.timestamp)} ago`
+    const Wab = latest?.Wab ?? 0;
+    const Wbc = latest?.Wbc ?? 0;
+    const Vab = latest?.Vab ?? 0;
+    const Ia = latest?.Ia ?? 0;
+    const Vbc = latest?.Vbc ?? 0;
+    const Ic = latest?.Ic ?? 0;
+
+    const lastUpdated = latest?.timestamp
+        ? `Updated ${formatDistanceToNowStrict(latest.timestamp)} ago`
         : 'No data';
 
     return (
@@ -157,15 +174,15 @@ export function WattageCard({ deviceId }: WattageCardProps) {
                         ? <Skeleton className="h-7 w-20 mt-1" />
                         : (
                             <span className="font-mono text-[22px] font-semibold leading-tight text-foreground">
-                                {(data?.wab ?? 0).toFixed(2)}
+                                {Wab.toFixed(2)}
                                 <span className="ml-0.5 text-[12px] font-normal text-muted-foreground"> W</span>
                             </span>
                         )
                     }
                     <div className="mt-0.5 flex gap-2 text-[10px] text-muted-foreground">
-                        <span>{(data?.v1 ?? 0).toFixed(1)} V</span>
+                        <span>{Vab.toFixed(1)} V</span>
                         <span>·</span>
-                        <span>{(data?.i1 ?? 0).toFixed(2)} A</span>
+                        <span>{Ia.toFixed(2)} A</span>
                     </div>
                 </div>
 
@@ -176,15 +193,15 @@ export function WattageCard({ deviceId }: WattageCardProps) {
                         ? <Skeleton className="h-7 w-20 mt-1" />
                         : (
                             <span className="font-mono text-[22px] font-semibold leading-tight text-foreground">
-                                {(data?.wbc ?? 0).toFixed(2)}
+                                {Wbc.toFixed(2)}
                                 <span className="ml-0.5 text-[12px] font-normal text-muted-foreground"> W</span>
                             </span>
                         )
                     }
                     <div className="mt-0.5 flex gap-2 text-[10px] text-muted-foreground">
-                        <span>{(data?.v2 ?? 0).toFixed(1)} V</span>
+                        <span>{Vbc.toFixed(1)} V</span>
                         <span>·</span>
-                        <span>{(data?.i2 ?? 0).toFixed(2)} A</span>
+                        <span>{Ic.toFixed(2)} A</span>
                     </div>
                 </div>
             </div>
@@ -197,11 +214,11 @@ export function WattageCard({ deviceId }: WattageCardProps) {
 }
 
 // ─── Device Total Power Card (PO / PN / PT) ───────────────────────────────────
-// total = Wab + Wbc, label inferred from deviceId
 
 interface DeviceTotalPowerCardProps {
     deviceId?: string;
     maxWatts?: number;
+    fullNameOverride?: string;
 }
 
 const LABEL_ACCENT: Record<string, { color: string; bg: string; text: string }> = {
@@ -210,17 +227,28 @@ const LABEL_ACCENT: Record<string, { color: string; bg: string; text: string }> 
     PO: { color: 'bg-amber-500',   bg: 'bg-amber-100 dark:bg-amber-900/40',    text: 'text-amber-600 dark:text-amber-400' },
 };
 
-export function DeviceTotalPowerCard({ deviceId, maxWatts = 5000 }: DeviceTotalPowerCardProps) {
-    const { data, loading } = useWattage(deviceId);
+export function DeviceTotalPowerCard({ deviceId, maxWatts = 5000, fullNameOverride }: DeviceTotalPowerCardProps) {
+    const { data: analytics, loading } = useAnalytics(deviceId, 1);
+    const latest = analytics?.latestSingle;
 
-    const label = data?.label ?? 'PO';
-    const fullName = data?.fullName ?? 'Old Building';
-    const total = data?.total ?? 0;
-    const accent = LABEL_ACCENT[label];
+    // Use twm_total_power explicitly, fallback to total_power if 0
+    const total = latest?.twm_total_power || latest?.total_power || 0;
+    const Wab = latest?.Wab ?? 0;
+    const Wbc = latest?.Wbc ?? 0;
+
+    // Infer label from deviceId (e.g. if deviceId is "device_PO_1", label is PO)
+    let label = 'PO';
+    if (deviceId) {
+        if (deviceId.toUpperCase().includes('PT')) label = 'PT';
+        else if (deviceId.toUpperCase().includes('PN')) label = 'PN';
+    }
+    
+    const fullName = fullNameOverride ?? 'Old Building'; 
+    const accent = LABEL_ACCENT[label] || LABEL_ACCENT['PO']; 
     const rangePercent = (total / maxWatts) * 100;
 
-    const lastUpdated = data?.timestamp
-        ? `Updated ${formatDistanceToNowStrict(data.timestamp)} ago`
+    const lastUpdated = latest?.timestamp
+        ? `Updated ${formatDistanceToNowStrict(latest.timestamp)} ago`
         : 'No data';
 
     return (
@@ -254,15 +282,15 @@ export function DeviceTotalPowerCard({ deviceId, maxWatts = 5000 }: DeviceTotalP
                 </div>
 
                 {/* Wab + Wbc breakdown */}
-                {!loading && data && (
+                {!loading && latest && (
                     <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg bg-muted/40 px-3 py-2">
                         <div className="flex flex-col gap-0.5">
                             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">W<sub>ab</sub></span>
-                            <span className="font-mono text-[13px] font-medium text-foreground">{data.wab.toFixed(2)} W</span>
+                            <span className="font-mono text-[13px] font-medium text-foreground">{Wab.toFixed(2)} W</span>
                         </div>
                         <div className="flex flex-col gap-0.5">
                             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">W<sub>bc</sub></span>
-                            <span className="font-mono text-[13px] font-medium text-foreground">{data.wbc.toFixed(2)} W</span>
+                            <span className="font-mono text-[13px] font-medium text-foreground">{Wbc.toFixed(2)} W</span>
                         </div>
                     </div>
                 )}

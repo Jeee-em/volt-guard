@@ -52,7 +52,7 @@ export function useDevices(): {
             status: 'active' | 'inactive' | 'maintenance',
             lastSeen?: number,
         ): Promise<Device> => {
-            const readingsRef = ref(db, `readings/${deviceId}`);
+            const readingsRef = ref(db, `readings_v2/${deviceId}`);
             const latestReadingQuery = query(
                 readingsRef,
                 orderByChild('timestamp'),
@@ -89,7 +89,7 @@ export function useDevices(): {
 
         const buildDevicesFromReadings = async () => {
             try {
-                const readingsSnapshot = await get(ref(db, 'readings'));
+                const readingsSnapshot = await get(ref(db, 'readings_v2'));
                 if (!readingsSnapshot.exists()) {
                     setDevices([]);
                     setLoading(false);

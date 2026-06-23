@@ -47,7 +47,6 @@ export function DashboardReadingsProvider({ children }: { children: ReactNode })
         powerLossDeviceIds.device1Id,
         powerLossDeviceIds.device2Id,
         powerLossDeviceIds.device3Id,
-        { bucketMs: POWER_LOSS_BUCKET_MS, limit: 600 }
     );
 
     const chartData = useMemo(

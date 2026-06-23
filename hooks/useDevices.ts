@@ -59,7 +59,7 @@ export function useDevices(): {
                 // Create a promise to check latest reading for this device
                 const statusPromise = new Promise<void>((resolve) => {
                     // Query the latest reading for this device
-                    const readingsRef = ref(db, `readings/${deviceId}`);
+                    const readingsRef = ref(db, `readings_v2/${deviceId}`);
                     const latestReadingQuery = query(
                         readingsRef,
                         orderByChild('timestamp'),

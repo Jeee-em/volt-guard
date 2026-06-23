@@ -14,7 +14,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { usePowerLossHistory } from '@/hooks/use-power-loss-history';
 import { useToast } from '@/hooks/use-toast';
 import { PowerDistributionHistoryTable } from './power-distribution-history-table';
 import { usePowerDistributionHistory } from '@/hooks/use-power-distribution-history';
@@ -213,7 +212,7 @@ function PowerDistributionThresholdPanel({ userId, currentDeviation, remarks, lo
         setDraft({ warning: pdThreshold.warning, critical: pdThreshold.critical });
     }, [pdThreshold.warning, pdThreshold.critical]);
 
-    // Toast on save/reset — same pattern as analytics page
+    // Toast on save/reset
     useEffect(() => {
         if (!lastSavedAt || lastToastAt.current === lastSavedAt) return;
         lastToastAt.current = lastSavedAt;
@@ -293,8 +292,6 @@ function PowerDistributionThresholdPanel({ userId, currentDeviation, remarks, lo
                                     </div>
                                 ))}
                             </div>
-
-
                         </div>
 
                         {/* Right — threshold inputs */}
@@ -349,8 +346,6 @@ function PowerDistributionThresholdPanel({ userId, currentDeviation, remarks, lo
                                 </div>
                             </div>
 
-
-
                             {isInvalid && (
                                 <p className="mt-2 flex items-center gap-1.5 text-[11px] text-destructive">
                                     <AlertCircle className="h-3.5 w-3.5" />
@@ -397,7 +392,7 @@ export function PowerLossView({ transformerId, newBuildingId, oldBuildingId }: P
     const [userRole, setUserRole] = useState<string | null>(null);
     const [autoUpload, setAutoUpload] = useState(true);
     const [lastUploadedTs, setLastUploadedTs] = useState<number>(0);
-    const isInitialMount = useRef(true); // <-- Add this line
+    const isInitialMount = useRef(true);
 
     const { data: historyData, loading: historyLoading, error: historyError } = usePowerDistributionHistory(500);
 
@@ -413,14 +408,14 @@ export function PowerLossView({ transformerId, newBuildingId, oldBuildingId }: P
         const isAdmin = userRole === 'super_admin' || userRole === 'admin';
         if (!autoUpload || !isAdmin || !latest) return;
 
-        // 1. Catch the page refresh / initial load
+        // Catch the page refresh / initial load
         if (isInitialMount.current) {
-            isInitialMount.current = false; // Mark that the initial load is done
-            setLastUploadedTs(latest.timestamp); // Sync the tracker so the 30s timer starts accurately
-            return; // Exit without uploading
+            isInitialMount.current = false;
+            setLastUploadedTs(latest.timestamp);
+            return;
         }
 
-        // 2. Normal 30-second throttle check
+        // Normal 30-second throttle check
         if (latest.timestamp - lastUploadedTs < 30000) return;
 
         const db = getDatabase(app);
@@ -428,9 +423,9 @@ export function PowerLossView({ transformerId, newBuildingId, oldBuildingId }: P
         set(newRef, {
             timestamp: latest.timestamp,
             time: latest.time,
-            pt_total: latest.pt,
-            pn_total: latest.pn,
-            po_total: latest.po,
+            pt_total: latest.pt, // Maps directly to new twm_total_power via the hook above
+            pn_total: latest.pn, // Maps directly to new twm_total_power via the hook above
+            po_total: latest.po, // Maps directly to new twm_total_power via the hook above
             deviation: latest.deviation,
             remarks: latest.remarks,
         })
