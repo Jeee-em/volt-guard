@@ -235,7 +235,6 @@ const LABEL_ACCENT: Record<string, { color: string; bg: string; text: string }> 
     PO: { color: 'bg-amber-500', bg: 'bg-amber-100 dark:bg-amber-900/40', text: 'text-amber-600 dark:text-amber-400' },
 };
 
-// Map your specific Firebase device IDs to their proper labels and names
 const DEVICE_MAPPING: Record<string, { label: string; name: string }> = {
     'power_monitor_01': { label: 'PT', name: 'Transformer' },
     'power_monitor_02': { label: 'PN', name: 'New Building' },
